@@ -4,3 +4,6 @@ qml/music_resource/loadmusic_by_default/*
 .qmlls.ini
 /downloaded_songs/*
 /config/covers/*
+*.log
+agent_service/.idea
+agent_service/__pycache__

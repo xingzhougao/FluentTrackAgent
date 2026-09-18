@@ -8,6 +8,7 @@
 #include "RecentManager.h"
 #include "FavoriteManager.h"
 #include "AppConfig.h"
+#include "agent/MusicAgentController.h"
 #include <QDir>
 
 int main(int argc,char * argv[])
@@ -46,6 +47,8 @@ int main(int argc,char * argv[])
     player.setFavoriteManager(&favoriteManager);
     playlistManager.setFavoriteManager(&favoriteManager);
 
+    MusicAgentController agentController;
+
     QQmlApplicationEngine engine;       //创建QML引擎
     engine.rootContext()->setContextProperty("appConfig", &config);
     engine.rootContext()->setContextProperty("player",&player);
@@ -58,6 +61,8 @@ int main(int argc,char * argv[])
     engine.rootContext()->setContextProperty("favoriteLibrary",favoriteManager.model());
     engine.rootContext()->setContextProperty("searchLibrary",&searchLibrary);
     engine.rootContext()->setContextProperty("suggestLibrary",&suggestLibrary);
+    engine.rootContext()->setContextProperty("agentController", &agentController);
+    engine.rootContext()->setContextProperty("agentMessageModel", agentController.messageModel());
 
     QObject::connect(&engine,&QQmlApplicationEngine::objectCreationFailed,&app,
                      [](){QCoreApplication::exit(-1);},Qt::QueuedConnection);

@@ -11,9 +11,10 @@ Item {
     property color accentColor: "#6ea8ff"
     property color borderColor: "#1f2b3a"
 
-    // 助手状态属性
-    property string agentStatus: "ready" // "ready", "thinking", "offline"
-    property string statusText: "已就绪"
+    // 助手状态属性 (优先联动 C++ agentController，未连接时自适应)
+    property bool isConnected: typeof agentController !== "undefined" ? agentController.isConnected : false
+    property string agentStatus: typeof agentController !== "undefined" ? agentController.agentStatus : "offline"
+    property string statusText: typeof agentController !== "undefined" ? agentController.statusText : "服务未连接"
 
     // 1. 背景层 暗色 WinUI 风格渐变
     Rectangle {
@@ -128,9 +129,13 @@ Item {
                     Text { text: "新建会话"; color: "#cbd5e1"; font.pixelSize: 12 }
                 }
                 onClicked: {
-                    chatModel.clear();
-                    root.agentStatus = "ready";
-                    root.statusText = "已就绪";
+                    if (typeof agentController !== "undefined" && agentController) {
+                        agentController.newSession();
+                    } else {
+                        chatModel.clear();
+                        root.agentStatus = "ready";
+                        root.statusText = "已就绪";
+                    }
                 }
             }
 
@@ -169,7 +174,7 @@ Item {
             id: chatView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            model: chatModel
+            model: (typeof agentMessageModel !== "undefined" && agentMessageModel) ? agentMessageModel : chatModel
 
             onStarterPromptClicked: function(prompt) {
                 inputBar.setPrompt(prompt);
@@ -197,9 +202,14 @@ Item {
         id: chatModel
     }
 
-    // 业务与交互模拟处理器 (供 Step 1 前端验证验收)
+    // 业务与交互处理器 (优先通过 C++ agentController 发送至 Python Agent)
     function handleUserMessage(userText) {
-        // 1. 添加用户消息
+        if (typeof agentController !== "undefined" && agentController) {
+            agentController.sendMessage(userText);
+            return;
+        }
+
+        // 1. 本地 Mock 模式兜底
         chatModel.append({
             role: "user",
             content: userText,
@@ -315,8 +325,11 @@ Item {
 
     AgentSettingsDialog {
         id: settingsDialog
-        onSettingsSaved: function(provider, baseUrl, apiKey, modelName) {
-            console.log("模型配置已更新:", provider, baseUrl, modelName);
+        onSettingsSaved: function(provider, baseUrl, apiKey, modelName, enableThinking) {
+            if (typeof agentController !== "undefined" && agentController) {
+                agentController.updateLlmConfig(provider, baseUrl, apiKey, modelName, enableThinking);
+            }
+            console.log("模型配置已更新:", provider, baseUrl, modelName, "深度思考:", enableThinking);
         }
     }
 }

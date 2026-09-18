@@ -6,16 +6,17 @@ Item {
     id: root
 
     property string currentProvider: "local" // "local" or "cloud"
-    property string localBaseUrl: "http://127.0.0.1:11434/v1"
-    property string localModelName: "qwen2.5:7b"
+    property string localBaseUrl: "http://127.0.0.1:11434"
+    property string localModelName: "qwen3.5:9b-q4_K_M"
     property string cloudBaseUrl: "https://api.deepseek.com/v1"
     property string cloudApiKey: ""
-    property string cloudModelName: "deepseek-chat"
+    property string cloudModelName: "deepseek-flash"
+    property bool enableThinking: false
 
     property string testStatus: "" // "", "testing", "success", "failed"
     property string testMessage: ""
 
-    signal settingsSaved(string provider, string baseUrl, string apiKey, string modelName)
+    signal settingsSaved(string provider, string baseUrl, string apiKey, string modelName, bool enableThinking)
 
     visible: false
     anchors.fill: parent
@@ -268,6 +269,34 @@ Item {
                 }
             }
 
+            // 思维链/深度思考开关
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: "🧠 深度思考 / 思维链 (Reasoning)"
+                        color: "#e2e8f0"
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        text: thinkingSwitch.checked ? "已开启思维链 (展示详细推理过程，耗时 5~15 秒)" : "已关闭思维链 (极速响应模式，耗时 0.5~1.5 秒)"
+                        color: thinkingSwitch.checked ? "#60a5fa" : "#10b981"
+                        font.pixelSize: 11
+                    }
+                }
+
+                Switch {
+                    id: thinkingSwitch
+                    checked: root.enableThinking
+                    onToggled: root.enableThinking = checked
+                }
+            }
+
             // 测试状态提示
             Text {
                 Layout.fillWidth: true
@@ -367,7 +396,7 @@ Item {
                             root.cloudApiKey = keyInput.text;
                             root.cloudModelName = modelInput.text;
                         }
-                        root.settingsSaved(root.currentProvider, urlInput.text, keyInput.text, modelInput.text);
+                        root.settingsSaved(root.currentProvider, urlInput.text, keyInput.text, modelInput.text, root.enableThinking);
                         root.close();
                     }
                 }

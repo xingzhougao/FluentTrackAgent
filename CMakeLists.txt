@@ -5,7 +5,7 @@ project(FluentWinUI_Musicplayer VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(QT_QML_GENERATE_QMLLS_INI ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia WebSockets Network)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -64,6 +64,12 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
         src/AppConfig.cpp
         src/CoverManager.h
         src/CoverManager.cpp
+        src/agent/MusicAgentTransport.h
+        src/agent/MusicAgentTransport.cpp
+        src/agent/AgentMessageModel.h
+        src/agent/AgentMessageModel.cpp
+        src/agent/MusicAgentController.h
+        src/agent/MusicAgentController.cpp
 
     RESOURCES
         qml/icons/agent.svg
@@ -116,7 +122,7 @@ set_target_properties(appFluentWinUI_Musicplayer PROPERTIES
 )
 
 target_link_libraries(appFluentWinUI_Musicplayer
-    PRIVATE Qt6::Quick Qt6::QuickControls2  Qt6::Multimedia
+    PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::WebSockets Qt6::Network
 )
 
 install(TARGETS appFluentWinUI_Musicplayer
