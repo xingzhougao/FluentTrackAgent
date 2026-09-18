@@ -39,6 +39,14 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
     QML_FILES qml/pages/LyricPage.qml
     QML_FILES qml/pages/FavoritePage.qml
     QML_FILES qml/pages/SearchResultPage.qml
+    QML_FILES qml/agent/AgentPage.qml
+    QML_FILES qml/agent/AgentChatView.qml
+    QML_FILES qml/agent/AgentMessageDelegate.qml
+    QML_FILES qml/agent/AgentToolCard.qml
+    QML_FILES qml/agent/AgentThinkingIndicator.qml
+    QML_FILES qml/agent/AgentConfirmDialog.qml
+    QML_FILES qml/agent/AgentInputBar.qml
+    QML_FILES qml/agent/AgentSettingsDialog.qml
     SOURCES
         src/PlayerController.h
         src/PlayerController.cpp
@@ -58,6 +66,7 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
         src/CoverManager.cpp
 
     RESOURCES
+        qml/icons/agent.svg
         qml/icons/download_manager.svg
         qml/icons/my_love.svg
         qml/icons/discover_music.svg

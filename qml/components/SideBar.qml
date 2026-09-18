@@ -86,10 +86,8 @@ Rectangle{
 
         NavButton{
             Layout.fillWidth: true
-            //Layout.fillHeight: false
-            //Layout.preferredHeight: 46
-            text: "下载管理"
-            iconSource: "../icons/download_manager.svg"
+            text: "智能助手"
+            iconSource: "../icons/agent.svg"
             selected: root.selectedIndex === 6
 
             onClicked: {

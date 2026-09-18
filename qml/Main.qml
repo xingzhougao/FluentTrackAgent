@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "components"
 import "pages"
+import "agent"
 
 ApplicationWindow {
     id: window
@@ -195,8 +196,15 @@ ApplicationWindow {
                         borderColor: window.borderColor
                     }
 
-                    // 索引 6 占位
-                    Item {}
+                    // 索引 6: 智能助手
+                    AgentPage {
+                        id: agentPage
+                        playerController: player
+                        textPrimaryColor: window.textPrimaryColor
+                        textSecondaryColor: window.textSecondaryColor
+                        accentColor: window.accentColor
+                        borderColor: window.borderColor
+                    }
 
                     // 索引 7: 搜索结果页
                     SearchResultPage {
