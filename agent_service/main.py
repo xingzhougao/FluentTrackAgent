@@ -10,6 +10,7 @@ if "PYTHONPATH" in os.environ:
     del os.environ["PYTHONPATH"]
 
 import argparse
+import asyncio
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,7 +79,8 @@ async def websocket_endpoint(
         while True:
             # 接收客户端 JSON 数据
             data = await websocket.receive_json()
-            await runtime.handle_inbound_message(session_id, data)
+            # 异步非阻塞派发，确保等待 tool_result 时接收循环能持续收包
+            asyncio.create_task(runtime.handle_inbound_message(session_id, data))
     except WebSocketDisconnect:
         runtime.session_manager.disconnect(session_id)
     except Exception as e:

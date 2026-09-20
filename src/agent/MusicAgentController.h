@@ -6,6 +6,10 @@
 #include <QJsonArray>
 #include "MusicAgentTransport.h"
 #include "AgentMessageModel.h"
+#include "ToolDispatcher.h"
+
+class PlayerController;
+class FavoriteManager;
 
 class MusicAgentController : public QObject
 {
@@ -25,6 +29,9 @@ public:
     QString statusText() const;
     QString currentModel() const;
     AgentMessageModel* messageModel() const;
+
+    void setPlayerController(PlayerController *player);
+    void setFavoriteManager(FavoriteManager *favoriteManager);
 
 public slots:
     void sendMessage(const QString &text);
@@ -48,6 +55,7 @@ private slots:
 private:
     MusicAgentTransport *m_transport;
     AgentMessageModel *m_messageModel;
+    ToolDispatcher m_toolDispatcher;
 
     QString m_agentStatus; // "ready", "thinking", "offline"
     QString m_statusText;

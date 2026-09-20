@@ -23,6 +23,16 @@ MusicAgentController::~MusicAgentController()
 {
 }
 
+void MusicAgentController::setPlayerController(PlayerController *player)
+{
+    m_toolDispatcher.setPlayerController(player);
+}
+
+void MusicAgentController::setFavoriteManager(FavoriteManager *favoriteManager)
+{
+    m_toolDispatcher.setFavoriteManager(favoriteManager);
+}
+
 bool MusicAgentController::isConnected() const
 {
     return m_transport->isConnected();
@@ -188,6 +198,32 @@ void MusicAgentController::onTransportMessageReceived(const QJsonObject &message
             toolsList.append(val.toVariant());
         }
         m_messageModel->finishAssistantMessage(content, thinking, durationMs, toolsList);
+        return;
+    }
+
+    if (type == "tool_request") {
+        QString requestId = message.value("request_id").toString();
+        QString toolCallId = payload.value("tool_call_id").toString();
+        QString toolName = payload.value("tool_name").toString();
+        QJsonObject arguments = payload.value("arguments").toObject();
+
+        qDebug() << "[MusicAgentController] 收到原子工具调用请求:" << toolName << arguments;
+        QJsonObject toolExecRes = m_toolDispatcher.executeTool(toolName, arguments);
+
+        // 构建并回传 tool_result
+        QJsonObject reply;
+        reply["type"] = "tool_result";
+        reply["request_id"] = requestId;
+
+        QJsonObject replyPayload;
+        replyPayload["tool_call_id"] = toolCallId;
+        replyPayload["tool_name"] = toolName;
+        replyPayload["success"] = toolExecRes.value("success").toBool(false);
+        replyPayload["result"] = toolExecRes.value("result").toObject();
+        replyPayload["error"] = toolExecRes.value("error").toString();
+
+        reply["payload"] = replyPayload;
+        m_transport->sendJson(reply);
         return;
     }
 

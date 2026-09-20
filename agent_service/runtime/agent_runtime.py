@@ -1,17 +1,20 @@
 """
-AgentRuntime 核心分发与事件调度中心 (基于架构审查第 2 项 AgentRuntime 分层)
+AgentRuntime 核心分发与事件调度中心 (基于架构审查第 2 项 AgentRuntime 分层与第 3 项确定性工作流)
 """
 import time
 import uuid
+import asyncio
 import logging
 from typing import Optional, Dict, Any
 
-from config import ServiceConfig, global_config, LlmConfig
+from config import ServiceConfig, global_config, LlmConfig, save_config
 from llm.llm_manager import LlmManager
 from utils.think_parser import StreamingThinkTracker, ThinkTagParser
 from .agent_logger import global_logger, AgentEvent
 from .context_manager import ContextManager
 from .session_manager import SessionManager
+from .intent_router import IntentRouter
+from workflows.player_command_workflow import PlayerCommandWorkflow
 
 logger = logging.getLogger("AgentLogger")
 
@@ -29,6 +32,53 @@ class AgentRuntime:
             max_turns=self.config.max_history_turns
         )
         self.llm_manager = LlmManager(self.config.llm)
+
+        # 全双工客户端原子工具调用等待映射表 (request_id -> asyncio.Future)
+        self._pending_tool_requests: Dict[str, asyncio.Future] = {}
+        # 确定性工作流实例
+        self.player_workflow = PlayerCommandWorkflow(self)
+
+    async def call_client_tool(
+        self,
+        session_id: str,
+        tool_name: str,
+        arguments: dict,
+        timeout: float = 5.0
+    ) -> dict:
+        """
+        通过同一 WebSocket 链路向 Qt 客户端发起原子工具调用请求，
+        并异步等待客户端返回的 tool_result。
+        """
+        request_id = str(uuid.uuid4())
+        tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending_tool_requests[request_id] = future
+
+        logger.info(f"[AgentRuntime] 下发 tool_request: {tool_name} (req_id={request_id})")
+
+        sent = await self.session_manager.send_json(session_id, {
+            "type": "tool_request",
+            "request_id": request_id,
+            "payload": {
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments": arguments
+            }
+        })
+
+        if not sent:
+            self._pending_tool_requests.pop(request_id, None)
+            return {"success": False, "error": "WebSocket 连接已中断，无法发送工具调用", "result": {}}
+
+        try:
+            result_payload = await asyncio.wait_for(future, timeout=timeout)
+            return result_payload
+        except asyncio.TimeoutError:
+            logger.error(f"[AgentRuntime] 工具调用超时: {tool_name} (timeout={timeout}s)")
+            return {"success": False, "error": f"调用工具 {tool_name} 响应超时", "result": {}}
+        finally:
+            self._pending_tool_requests.pop(request_id, None)
 
     async def handle_inbound_message(self, session_id: str, message_data: dict):
         """处理来自 WebSocket 客户端的所有上行消息"""
@@ -64,7 +114,6 @@ class AgentRuntime:
                 new_llm = LlmConfig(**payload)
                 self.config.llm = new_llm
                 self.llm_manager.update_config(new_llm)
-                from config import save_config
                 save_config(self.config)
                 await self.session_manager.send_json(session_id, {
                     "type": "config_updated",
@@ -73,6 +122,15 @@ class AgentRuntime:
                 })
             except Exception as e:
                 logger.error(f"更新配置失败: {e}")
+            return
+
+        if msg_type == "tool_result":
+            # Qt 客户端回传原子工具执行结果，唤醒挂起的等待 Future
+            logger.info(f"[AgentRuntime] 收到客户端 tool_result: {request_id}, success={payload.get('success')}")
+            if request_id in self._pending_tool_requests:
+                fut = self._pending_tool_requests[request_id]
+                if not fut.done():
+                    fut.set_result(payload)
             return
 
         if msg_type == "user_message":
@@ -85,7 +143,7 @@ class AgentRuntime:
         logger.warning(f"未知或暂未处理的消息类型: {msg_type}")
 
     async def _process_user_message(self, session_id: str, request_id: str, user_text: str):
-        """核心处理：用户自然语言对话流式生成"""
+        """核心处理：意图路由、确定性工作流或自然语言流式生成"""
         start_time = time.perf_counter()
         session_ctx = self.context_manager.get_session(session_id)
         session_ctx.add_user_message(user_text)
@@ -97,14 +155,70 @@ class AgentRuntime:
             payload={"text": user_text}
         ))
 
-        # 状态更新通知客户端：思考中
+        provider = self.llm_manager.get_provider()
+
+        # Step 1: 意图识别 (双轨：快速规则 + LLM 降级)
+        intent = await IntentRouter.route_intent(user_text, provider)
+
+        # Step 2: 如果命中播放控制意图，由确定性 PlayerCommandWorkflow 闭环执行
+        if intent.intent_type == "PLAYER_CONTROL":
+            await self.session_manager.send_json(session_id, {
+                "type": "status_update",
+                "request_id": request_id,
+                "payload": {"status": "thinking", "message": "正在执行控制指令..."}
+            })
+
+            wf_output = await self.player_workflow.execute(
+                session_id=session_id,
+                request_id=request_id,
+                action=intent.action,
+                params=intent.params
+            )
+
+            duration_ms = (time.perf_counter() - start_time) * 1000
+
+            # 存入上下文历史
+            session_ctx.add_assistant_message(wf_output.answer_text)
+
+            # 发送流完成消息（附带 ToolCard 卡片列表）
+            await self.session_manager.send_json(session_id, {
+                "type": "assistant_message",
+                "request_id": request_id,
+                "payload": {
+                    "content": wf_output.answer_text,
+                    "thinking_content": "",
+                    "duration_ms": int(duration_ms),
+                    "tools": wf_output.tools
+                }
+            })
+
+            # 状态更新通知客户端：已就绪
+            await self.session_manager.send_json(session_id, {
+                "type": "status_update",
+                "request_id": request_id,
+                "payload": {"status": "ready", "message": "已就绪"}
+            })
+
+            global_logger.log_event(AgentEvent(
+                event_type="TOOL_EXECUTION",
+                session_id=session_id,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                payload={
+                    "action": intent.action,
+                    "success": wf_output.success,
+                    "tools_count": len(wf_output.tools)
+                }
+            ))
+            return
+
+        # Step 3: 普通自然语言对话（流式生成）
         await self.session_manager.send_json(session_id, {
             "type": "status_update",
             "request_id": request_id,
-            "payload": {"status": "thinking", "message": "正在深度思考..."}
+            "payload": {"status": "thinking", "message": "正在思考..."}
         })
 
-        provider = self.llm_manager.get_provider()
         tracker = StreamingThinkTracker()
 
         try:
@@ -152,7 +266,7 @@ class AgentRuntime:
                     "content": full_answer,
                     "thinking_content": full_thinking,
                     "duration_ms": int(duration_ms),
-                    "tools": []  # Step 2 为基础对话，Step 3 接入原子控制 Tool
+                    "tools": []
                 }
             })
 

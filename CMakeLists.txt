@@ -70,6 +70,8 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
         src/agent/AgentMessageModel.cpp
         src/agent/MusicAgentController.h
         src/agent/MusicAgentController.cpp
+        src/agent/ToolDispatcher.h
+        src/agent/ToolDispatcher.cpp
 
     RESOURCES
         qml/icons/agent.svg

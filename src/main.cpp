@@ -48,6 +48,8 @@ int main(int argc,char * argv[])
     playlistManager.setFavoriteManager(&favoriteManager);
 
     MusicAgentController agentController;
+    agentController.setPlayerController(&player);
+    agentController.setFavoriteManager(&favoriteManager);
 
     QQmlApplicationEngine engine;       //创建QML引擎
     engine.rootContext()->setContextProperty("appConfig", &config);
