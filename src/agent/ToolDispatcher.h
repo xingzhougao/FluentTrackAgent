@@ -6,6 +6,8 @@
 
 class PlayerController;
 class FavoriteManager;
+class MusicLibraryModel;
+class PlaylistManager;
 
 class ToolDispatcher : public QObject
 {
@@ -16,6 +18,8 @@ public:
 
     void setPlayerController(PlayerController *player);
     void setFavoriteManager(FavoriteManager *favoriteManager);
+    void setMusicLibrary(MusicLibraryModel *library);
+    void setPlaylistManager(PlaylistManager *playlistManager);
 
     /**
      * @brief 执行指定的原子工具
@@ -37,7 +41,15 @@ private:
     QJsonObject handleSetPlayMode(const QJsonObject &args);
     QJsonObject handleSeek(const QJsonObject &args);
 
+    // Step 4 新增原子工具
+    QJsonObject handleSearchLocalMusic(const QJsonObject &args);
+    QJsonObject handlePlayLocalTrack(const QJsonObject &args);
+    QJsonObject handleCreateTempPlaylist(const QJsonObject &args);
+    QJsonObject handleGetLocalLibraryOverview();
+
 private:
     QPointer<PlayerController> m_player;
     QPointer<FavoriteManager> m_favoriteManager;
+    QPointer<MusicLibraryModel> m_library;
+    QPointer<PlaylistManager> m_playlistManager;
 };

@@ -1,0 +1,209 @@
+[
+  {
+    "id": "tc_ctrl_vol_abs",
+    "query": "音量调到 20%",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "set_volume",
+    "expected_params": {"volume": 20}
+  },
+  {
+    "id": "tc_ctrl_vol_rel_up",
+    "query": "声音大一点",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "set_volume",
+    "expected_params": {"delta": 15}
+  },
+  {
+    "id": "tc_ctrl_vol_mute",
+    "query": "静音",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "set_volume",
+    "expected_params": {"volume": 0}
+  },
+  {
+    "id": "tc_ctrl_pause",
+    "query": "暂停播放",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "pause",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_ctrl_resume",
+    "query": "继续播放",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "resume",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_ctrl_next",
+    "query": "切到下一首",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "next_track",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_ctrl_prev",
+    "query": "上一首",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "previous_track",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_ctrl_fav",
+    "query": "收藏这首歌",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "toggle_favorite",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_ctrl_mode_loop",
+    "query": "单曲循环",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "set_play_mode",
+    "expected_params": {"mode": 2}
+  },
+  {
+    "id": "tc_ctrl_mode_rand",
+    "query": "随机播放",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "set_play_mode",
+    "expected_params": {"mode": 1}
+  },
+  {
+    "id": "tc_ctrl_info",
+    "query": "现在放的是什么歌",
+    "expected_intent": "PLAYER_CONTROL",
+    "expected_action": "get_player_state",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_search_qingtian",
+    "query": "播放晴天",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"query": "晴天"}
+  },
+  {
+    "id": "tc_search_artist_jay",
+    "query": "放一首周杰伦的歌",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"artist": "周杰伦"}
+  },
+  {
+    "id": "tc_search_quotes",
+    "query": "播放《稻香》",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"query": "稻香"}
+  },
+  {
+    "id": "tc_search_artist_song",
+    "query": "播放林俊杰的江南",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"artist": "林俊杰", "query": "江南"}
+  },
+  {
+    "id": "tc_search_eason_ten",
+    "query": "放陈奕迅的十年",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"artist": "陈奕迅", "query": "十年"}
+  },
+  {
+    "id": "tc_search_want_listen",
+    "query": "我想听告白气球",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {"query": "告白气球"}
+  },
+  {
+    "id": "tc_smart_mood_unhappy",
+    "query": "我今天有点不开心 给我播放一首能让我心情愉悦的歌曲",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_smart_mood_sad_cure",
+    "query": "心情不好想听点治愈的歌",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_smart_scene_coding",
+    "query": "我要写代码了，来几首轻快的中文歌",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_smart_scene_sleep",
+    "query": "放点适合助眠的纯音乐",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_smart_scene_running",
+    "query": "来几首跑步运动听的高能歌曲",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_smart_mood_happy",
+    "query": "放一首能让人开心的歌",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {}
+  },
+  {
+    "id": "tc_context_play_it",
+    "query": "你给我播放呀",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "is_context_referential": true
+  },
+  {
+    "id": "tc_context_said_song",
+    "query": "播放刚刚说的歌",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "is_context_referential": true
+  },
+  {
+    "id": "tc_context_recommended",
+    "query": "放刚才推荐的那首",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "is_context_referential": true
+  },
+  {
+    "id": "tc_context_ord_first",
+    "query": "放第一首",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "is_context_referential": true
+  },
+  {
+    "id": "tc_chat_greet",
+    "query": "你好，请介绍一下你自己",
+    "expected_intent": "CHAT",
+    "expected_action": ""
+  },
+  {
+    "id": "tc_chat_knowledge",
+    "query": "周杰伦是哪一年出道的",
+    "expected_intent": "CHAT",
+    "expected_action": ""
+  },
+  {
+    "id": "tc_chat_out_of_domain",
+    "query": "帮我写一段 Python 快速排序算法",
+    "expected_intent": "CHAT",
+    "expected_action": ""
+  }
+]

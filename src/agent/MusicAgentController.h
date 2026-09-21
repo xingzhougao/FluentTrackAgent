@@ -10,6 +10,8 @@
 
 class PlayerController;
 class FavoriteManager;
+class MusicLibraryModel;
+class PlaylistManager;
 
 class MusicAgentController : public QObject
 {
@@ -32,6 +34,8 @@ public:
 
     void setPlayerController(PlayerController *player);
     void setFavoriteManager(FavoriteManager *favoriteManager);
+    void setMusicLibrary(MusicLibraryModel *library);
+    void setPlaylistManager(PlaylistManager *playlistManager);
 
 public slots:
     void sendMessage(const QString &text);

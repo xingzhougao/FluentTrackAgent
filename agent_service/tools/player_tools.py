@@ -82,5 +82,59 @@ PLAYER_TOOLS: Dict[str, ToolDefinition] = {
             }
         },
         is_read_only=False
+    ),
+    "search_local_music": ToolDefinition(
+        name="search_local_music",
+        description="在本地音乐库中模糊检索匹配的曲目（支持按歌名、歌手或专辑检索，支持空关键字返回全部列表）",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "检索关键字（歌名或歌手，为空时匹配全部）"},
+                "limit": {"type": "integer", "description": "返回匹配结果的最大数量（默认10）"}
+            }
+        },
+        is_read_only=True
+    ),
+    "play_local_track": ToolDefinition(
+        name="play_local_track",
+        description="载入并播放指定的本地歌曲（按曲库索引、文件绝对路径或精确歌名）",
+        parameters={
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "description": "目标曲目在本地曲库中的索引编号"},
+                "file_path": {"type": "string", "description": "歌曲文件的绝对路径"},
+                "title": {"type": "string", "description": "歌曲标题（若未指定索引则按标题首项匹配）"}
+            }
+        },
+        is_read_only=False
+    ),
+    "create_temp_playlist": ToolDefinition(
+        name="create_temp_playlist",
+        description="根据一组曲目索引或路径动态组建智能歌单并启动播放",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "歌单名称（如「AI推荐: 专注编程」）"},
+                "track_indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "要加入歌单的本地曲目索引列表"
+                },
+                "track_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "要加入歌单的本地歌曲绝对路径列表"
+                },
+                "auto_play": {"type": "boolean", "description": "歌单创建后是否立即从第一首开始播放（默认 true）"}
+            },
+            "required": ["name"]
+        },
+        is_read_only=False
+    ),
+    "get_local_library_overview": ToolDefinition(
+        name="get_local_library_overview",
+        description="获取本地曲库总曲目数及曲目样本清单",
+        parameters={},
+        is_read_only=True
     )
 }

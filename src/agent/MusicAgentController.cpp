@@ -33,6 +33,16 @@ void MusicAgentController::setFavoriteManager(FavoriteManager *favoriteManager)
     m_toolDispatcher.setFavoriteManager(favoriteManager);
 }
 
+void MusicAgentController::setMusicLibrary(MusicLibraryModel *library)
+{
+    m_toolDispatcher.setMusicLibrary(library);
+}
+
+void MusicAgentController::setPlaylistManager(PlaylistManager *playlistManager)
+{
+    m_toolDispatcher.setPlaylistManager(playlistManager);
+}
+
 bool MusicAgentController::isConnected() const
 {
     return m_transport->isConnected();

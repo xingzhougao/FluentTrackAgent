@@ -7,3 +7,4 @@ qml/music_resource/loadmusic_by_default/*
 *.log
 agent_service/.idea
 agent_service/__pycache__
+__pycache__/
