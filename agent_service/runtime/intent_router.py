@@ -33,10 +33,36 @@ class IntentResult:
         return f"<IntentResult intent={self.intent_type} action={self.action} params={self.params} conf={self.confidence}>"
 
 
+def parse_ordinal_num(num_str: str) -> Optional[int]:
+    num_str = num_str.strip()
+    if num_str.isdigit():
+        val = int(num_str)
+        return val - 1 if val >= 1 else None
+
+    c_map = {
+        "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+        "六": 6, "七": 7, "八": 8, "九": 9, "十": 10
+    }
+    if num_str in c_map:
+        return c_map[num_str] - 1
+
+    if num_str.startswith("十") and len(num_str) == 2 and num_str[1] in c_map:
+        return 10 + c_map[num_str[1]] - 1
+
+    if len(num_str) >= 2 and num_str[0] in c_map and num_str[1] == "十":
+        tens = c_map[num_str[0]] * 10
+        if len(num_str) == 3 and num_str[2] in c_map:
+            return tens + c_map[num_str[2]] - 1
+        return tens - 1
+
+    return None
+
+
 class IntentRouter:
     """
-    双轨意图路由器：
-    - 快速规则层 (毫秒级，覆盖高频控制、点歌、场景歌单及上下文指代)
+    意图路由器 (基于 Step 4 架构要求)
+    两阶段分发：
+    - 正则与关键词确定性规则引擎 (极高频、低延迟、零幻觉)
     - LLM 结构化提取降级层 (复杂多变句式)
     """
 
@@ -45,7 +71,69 @@ class IntentRouter:
         clean = text.strip()
         lower = clean.lower()
 
-        # 0. 跨轮指代消歧（最高优先级拦截，防止被误判为常规播放或 resume）
+        # 检查是否是指代当前已有/上一轮推荐的歌单（如：“播放你给我推荐的这份歌单的第10首歌曲”, "播放这份歌单的第十首"）
+        is_referential_playlist = any(k in lower for k in [
+            "你给我推荐的", "你刚才推荐的", "你推荐的", "刚才推荐的", "之前推荐的",
+            "上面推荐的", "这份歌单", "这个歌单", "刚刚生成的歌单", "刚才生成的歌单",
+            "生成的这份歌单", "生成的这歌单", "这歌单", "该歌单", "当前歌单", "当前列表",
+            "歌单里的", "歌单中的", "歌单的第"
+        ])
+
+        # 检查是否包含生成/创建/定制新歌单语义 (例如：“给我生成一份轻松愉快歌曲的歌单”, "给我一份节奏轻快愉悦的歌单 并且播放其中第五首歌曲")
+        has_playlist_kw = any(w in lower for w in ["歌单", "播放列表", "新列表"])
+        has_create_act = any(w in lower for w in [
+            "生成", "创建", "建", "做", "整", "推荐", "定制", "一份", "一个", "来", "给", "弄", "搞", "放点", "来点"
+        ])
+        is_create_playlist = (not is_referential_playlist) and (has_playlist_kw and has_create_act)
+
+        # 匹配提取序号 (例如：“第十首”, "第10首", "第5首歌曲", "第2首歌", "最后一首")
+        ord_pattern = re.search(r"第\s*([0-9一二两三四五六七八九十]+)\s*(?:首|个|曲)(?:歌曲|歌|曲目)?", lower)
+        has_last_track = any(k in lower for k in ["最后一首", "最后首", "最后那首", "最后的一首"])
+
+        # 0. A: 生成歌单并且从指定序号起播 (例如：“给我生成一份歌单 并且播放其中的第十首歌曲”)
+        if is_create_playlist:
+            play_ord = None
+            if ord_pattern:
+                play_ord = parse_ordinal_num(ord_pattern.group(1))
+            elif has_last_track:
+                play_ord = -1
+            params = {"raw_text": clean}
+            if play_ord is not None:
+                params["play_ordinal"] = play_ord
+            return IntentResult(
+                intent_type="SMART_PLAYLIST",
+                action="smart_playlist",
+                params=params
+            )
+
+        # 0. B: 歌单指定序号点播 (例如：“播放这份歌单的第十首歌曲”, "播放你给我推荐的这份歌单的第10首歌曲", "我要播放第五首", "播放第5首", "放第2首", "切到最后一首")
+        if ord_pattern:
+            ord_idx = parse_ordinal_num(ord_pattern.group(1))
+            if ord_idx is not None:
+                return IntentResult(
+                    intent_type="SEARCH_AND_PLAY",
+                    action="search_and_play",
+                    params={"query": "", "ordinal_index": ord_idx, "is_context_referential": True}
+                )
+        if has_last_track:
+            return IntentResult(
+                intent_type="SEARCH_AND_PLAY",
+                action="search_and_play",
+                params={"query": "", "ordinal_index": -1, "is_context_referential": True}
+            )
+
+        # 0.1 歌词搜歌识别 (例如：“我想听有一首歌 歌词是还记得家是唯一的城堡”, "歌词是还记得你说家是唯一的城堡", "有首歌歌词有...")
+        lyric_pattern = re.search(r"(?:我想听|放|搜|找|有)?(?:一首)?(?:歌)?(?:歌词(?:是|有|包含|带|叫)|歌词里有|有句歌词(?:是)?)\s*[:：]?\s*[\"“'《]?([^\s，,。！？\"'”’《》]{2,40})[\"”'》]?", clean)
+        if lyric_pattern:
+            lyrics_text = lyric_pattern.group(1).strip()
+            if len(lyrics_text) >= 2:
+                return IntentResult(
+                    intent_type="SEARCH_AND_PLAY",
+                    action="search_and_play",
+                    params={"query": lyrics_text, "lyrics_query": lyrics_text}
+                )
+
+        # 0.2 跨轮指代消歧（最高优先级拦截，防止被误判为常规播放或 resume）
         referential_phrases = [
             "你给我播放呀", "给我播放呀", "给我放呀", "怎么不放呀", "放呀", "播放啊",
             "播放刚刚说的歌", "播放刚刚说的", "播放刚才说的歌", "播放刚才说的",
@@ -58,8 +146,6 @@ class IntentRouter:
         ]
         if any(p in lower for p in referential_phrases) or (
             any(k in lower for k in ["刚才推荐", "刚刚推荐", "之前推荐", "刚才说", "刚刚说", "之前说"])
-        ) or (
-            any(w in lower for w in ["放", "播", "听"]) and any(ord_k in lower for ord_k in ["第一首", "第1首", "第二首", "第2首", "第三首", "第3首", "最后一首"])
         ):
             return IntentResult(
                 intent_type="SEARCH_AND_PLAY",
@@ -190,13 +276,15 @@ class IntentRouter:
         cls,
         text: str,
         llm_provider: Optional[BaseLlmProvider] = None,
-        context_session = None
+        context_session = None,
+        **kwargs
     ) -> IntentResult:
         """
         统一意图路由入口：
         1. 快速确定性规则
         2. 若未命中且带音乐相关词汇，由 LLM 做结构化意图槽位识别
         """
+        effective_provider = llm_provider or kwargs.get("provider")
         rule_result = cls.match_rule(text)
         if rule_result:
             # 如果是上下文指代且传入了 context，立刻尝试预解析
@@ -213,7 +301,7 @@ class IntentRouter:
             "音量", "声音", "放", "停", "切", "唱", "歌", "大声", "小声",
             "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "推荐", "心情", "首"
         ]
-        if not any(k in text for k in suspicious_keywords) or not llm_provider:
+        if not any(k in text for k in suspicious_keywords) or not effective_provider:
             return IntentResult(intent_type="CHAT")
 
         # 降级：调用 LLM 做结构化意图与槽位提取
@@ -241,7 +329,7 @@ class IntentRouter:
 请严格输出 JSON 对象，绝不要输出额外解释或 markdown 以外的文字：
 {{"intent_type": "PLAYER_CONTROL|SEARCH_AND_PLAY|SMART_PLAYLIST|CHAT", "action": "...", "params": {{}}}}
 """
-            raw = await llm_provider.chat_complete(
+            raw = await effective_provider.chat_complete(
                 [ChatMessage(role="user", content=prompt)],
                 temperature=0.1
             )

@@ -161,104 +161,116 @@ class AgentRuntime:
 
         provider = self.llm_manager.get_provider()
 
-        # Step 1: 意图识别 (双轨：快速规则 + LLM 降级 + 上下文指代消歧)
-        intent = await IntentRouter.route_intent(user_text, provider, context_session=session_ctx)
+        try:
+            # Step 1: 意图识别 (双轨：快速规则 + LLM 降级 + 上下文指代消歧)
+            intent = await IntentRouter.route_intent(user_text, provider, context_session=session_ctx)
 
-        # Step 2: 确定性工作流闭环分发
-        if intent.intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST"]:
-            wf_output = None
-            if intent.intent_type == "PLAYER_CONTROL":
+            # Step 2: 确定性工作流闭环分发
+            if intent.intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST"]:
+                wf_output = None
+                if intent.intent_type == "PLAYER_CONTROL":
+                    await self.session_manager.send_json(session_id, {
+                        "type": "status_update",
+                        "request_id": request_id,
+                        "payload": {"status": "thinking", "message": "正在执行控制指令..."}
+                    })
+                    wf_output = await self.player_workflow.execute(
+                        session_id=session_id,
+                        request_id=request_id,
+                        action=intent.action,
+                        params=intent.params
+                    )
+                elif intent.intent_type == "SEARCH_AND_PLAY":
+                    await self.session_manager.send_json(session_id, {
+                        "type": "status_update",
+                        "request_id": request_id,
+                        "payload": {"status": "thinking", "message": "正在检索曲目并开播..."}
+                    })
+                    params = dict(intent.params)
+                    q = params.pop("query", "")
+                    art = params.pop("artist", "")
+                    params.pop("raw_text", None)
+                    wf_output = await self.search_play_workflow.execute(
+                        session_id=session_id,
+                        request_id=request_id,
+                        query=q,
+                        artist=art,
+                        raw_text=user_text,
+                        **params
+                    )
+                elif intent.intent_type == "SMART_PLAYLIST":
+                    await self.session_manager.send_json(session_id, {
+                        "type": "status_update",
+                        "request_id": request_id,
+                        "payload": {"status": "thinking", "message": "正在分析场景与推荐曲目..."}
+                    })
+                    sp_params = dict(intent.params)
+                    mood_v = sp_params.pop("mood", "")
+                    scene_v = sp_params.pop("scene", "")
+                    lang_v = sp_params.pop("language", "")
+                    count_v = sp_params.pop("count", 5) or 5
+                    sp_params.pop("raw_text", None)
+                    wf_output = await self.smart_playlist_workflow.execute(
+                        session_id=session_id,
+                        request_id=request_id,
+                        mood=mood_v,
+                        scene=scene_v,
+                        language=lang_v,
+                        count=count_v,
+                        raw_text=user_text,
+                        **sp_params
+                    )
+
+                duration_ms = (time.perf_counter() - start_time) * 1000
+
+                # 存入上下文历史
+                session_ctx.add_assistant_message(
+                    wf_output.answer_text,
+                    recommended_tracks=session_ctx.last_recommended_tracks
+                )
+
+                # 发送流完成消息（附带 ToolCard 卡片列表）
+                await self.session_manager.send_json(session_id, {
+                    "type": "assistant_message",
+                    "request_id": request_id,
+                    "payload": {
+                        "content": wf_output.answer_text,
+                        "thinking_content": "",
+                        "duration_ms": int(duration_ms),
+                        "tools": wf_output.tools
+                    }
+                })
+
+                # 状态更新通知客户端：已就绪
                 await self.session_manager.send_json(session_id, {
                     "type": "status_update",
                     "request_id": request_id,
-                    "payload": {"status": "thinking", "message": "正在执行控制指令..."}
+                    "payload": {"status": "ready", "message": "已就绪"}
                 })
-                wf_output = await self.player_workflow.execute(
+
+                global_logger.log_event(AgentEvent(
+                    event_type="WORKFLOW_EXECUTION",
                     session_id=session_id,
                     request_id=request_id,
-                    action=intent.action,
-                    params=intent.params
-                )
-            elif intent.intent_type == "SEARCH_AND_PLAY":
-                await self.session_manager.send_json(session_id, {
-                    "type": "status_update",
-                    "request_id": request_id,
-                    "payload": {"status": "thinking", "message": "正在检索曲目并开播..."}
-                })
-                wf_output = await self.search_play_workflow.execute(
-                    session_id=session_id,
-                    request_id=request_id,
-                    query=intent.params.get("query", ""),
-                    artist=intent.params.get("artist", ""),
-                    raw_text=user_text
-                )
-            elif intent.intent_type == "SMART_PLAYLIST":
-                await self.session_manager.send_json(session_id, {
-                    "type": "status_update",
-                    "request_id": request_id,
-                    "payload": {"status": "thinking", "message": "正在分析场景与推荐曲目..."}
-                })
-                wf_output = await self.smart_playlist_workflow.execute(
-                    session_id=session_id,
-                    request_id=request_id,
-                    mood=intent.params.get("mood", ""),
-                    scene=intent.params.get("scene", ""),
-                    language=intent.params.get("language", ""),
-                    count=intent.params.get("count", 1),
-                    raw_text=user_text
-                )
+                    duration_ms=duration_ms,
+                    payload={
+                        "intent_type": intent.intent_type,
+                        "action": intent.action,
+                        "success": wf_output.success,
+                        "tools_count": len(wf_output.tools)
+                    }
+                ))
+                return
 
-            duration_ms = (time.perf_counter() - start_time) * 1000
-
-            # 存入上下文历史
-            session_ctx.add_assistant_message(
-                wf_output.answer_text,
-                recommended_tracks=session_ctx.last_recommended_tracks
-            )
-
-            # 发送流完成消息（附带 ToolCard 卡片列表）
-            await self.session_manager.send_json(session_id, {
-                "type": "assistant_message",
-                "request_id": request_id,
-                "payload": {
-                    "content": wf_output.answer_text,
-                    "thinking_content": "",
-                    "duration_ms": int(duration_ms),
-                    "tools": wf_output.tools
-                }
-            })
-
-            # 状态更新通知客户端：已就绪
+            # Step 3: 普通自然语言对话（流式生成）
             await self.session_manager.send_json(session_id, {
                 "type": "status_update",
                 "request_id": request_id,
-                "payload": {"status": "ready", "message": "已就绪"}
+                "payload": {"status": "thinking", "message": "正在思考..."}
             })
 
-            global_logger.log_event(AgentEvent(
-                event_type="WORKFLOW_EXECUTION",
-                session_id=session_id,
-                request_id=request_id,
-                duration_ms=duration_ms,
-                payload={
-                    "intent_type": intent.intent_type,
-                    "action": intent.action,
-                    "success": wf_output.success,
-                    "tools_count": len(wf_output.tools)
-                }
-            ))
-            return
+            tracker = StreamingThinkTracker()
 
-        # Step 3: 普通自然语言对话（流式生成）
-        await self.session_manager.send_json(session_id, {
-            "type": "status_update",
-            "request_id": request_id,
-            "payload": {"status": "thinking", "message": "正在思考..."}
-        })
-
-        tracker = StreamingThinkTracker()
-
-        try:
             async for chunk in provider.chat_stream(
                 messages=session_ctx.messages,
                 temperature=self.config.llm.temperature
@@ -334,13 +346,18 @@ class AgentRuntime:
                 request_id=request_id,
                 duration_ms=duration_ms,
                 success=False,
-                error_code="LLM_EXECUTION_ERROR",
+                error_code="EXECUTION_ERROR",
                 payload={"error": str(e)}
             ))
             await self.session_manager.send_json(session_id, {
-                "type": "error",
+                "type": "assistant_message",
                 "request_id": request_id,
-                "payload": {"message": f"处理请求异常: {str(e)}"}
+                "payload": {
+                    "content": f"抱歉，在处理您的请求时遇到了问题：{str(e)}",
+                    "thinking_content": "",
+                    "duration_ms": int(duration_ms),
+                    "tools": []
+                }
             })
             await self.session_manager.send_json(session_id, {
                 "type": "status_update",

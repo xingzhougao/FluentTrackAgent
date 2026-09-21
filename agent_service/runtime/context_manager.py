@@ -88,24 +88,18 @@ class SessionContext:
         """
         clean = user_text.strip().lower()
 
-        # 1. 序号提取：例如“放第一首”、“播放第2首”
-        ordinals = {
-            "第一首": 0, "第1首": 0, "首首": 0, "第一个": 0,
-            "第二首": 1, "第2首": 1, "第二个": 1,
-            "第三首": 2, "第3首": 2, "第三个": 2,
-            "第四首": 3, "第4首": 3, "第四个": 3,
-            "第五首": 4, "第5首": 4, "第五个": 4,
-            "最后一首": -1
-        }
-        for kw, idx in ordinals.items():
-            if kw in clean and self.last_recommended_tracks:
-                if idx == -1:
-                    target = self.last_recommended_tracks[-1]
-                elif idx < len(self.last_recommended_tracks):
-                    target = self.last_recommended_tracks[idx]
-                else:
-                    target = self.last_recommended_tracks[0]
-                return target.get("title", "")
+        # 1. 序号提取：例如“放第一首”、“我要播放第五首”、“播放第5首”、“播放这份歌单的第十首歌曲”
+        ord_match = re.search(r"第\s*([0-9一二两三四五六七八九十]+)\s*(?:首|个|曲)(?:歌曲|歌|曲目)?", clean)
+        if ord_match and self.last_recommended_tracks:
+            from runtime.intent_router import parse_ordinal_num
+            idx = parse_ordinal_num(ord_match.group(1))
+            if idx is not None:
+                if idx < len(self.last_recommended_tracks):
+                    return self.last_recommended_tracks[idx].get("title", "")
+                return self.last_recommended_tracks[-1].get("title", "")
+
+        if any(k in clean for k in ["最后一首", "最后首", "最后那首", "最后的一首"]) and self.last_recommended_tracks:
+            return self.last_recommended_tracks[-1].get("title", "")
 
         # 2. 泛指代匹配词库：例如“你给我播放呀”、“播放刚才说的那首”、“放呀”
         referential_phrases = [

@@ -7,7 +7,7 @@ SmartPlaylistWorkflow 场景与情绪智能歌单工作流 (基于 Step 4 架构
 """
 import re
 import logging
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from .base import BaseWorkflow, WorkflowOutput
 from services.music_tagging_service import MusicTaggingService
 from cache.tag_cache import AgentTagCache
@@ -44,13 +44,15 @@ class SmartPlaylistWorkflow(BaseWorkflow):
         resolved_mood = mood
         resolved_scene = scene
         resolved_lang = language
-        resolved_count = count
+        resolved_count = int(count) if count is not None else 5
+        if resolved_count <= 0:
+            resolved_count = 5
 
         # 情绪特征推导
         if any(w in clean_text for w in ["不开心", "难过", "伤心", "郁闷", "烦躁", "丧", "压抑"]):
             resolved_mood = "治愈/愉悦/轻松"
             resolved_scene = "治愈/日常"
-        elif any(w in clean_text for w in ["心情愉悦", "高兴", "开心", "欢快", "快乐", "愉悦"]):
+        elif any(w in clean_text for w in ["心情愉悦", "高兴", "开心", "欢快", "快乐", "愉悦", "轻松", "愉快", "放松"]):
             resolved_mood = "开心/欢快/轻快"
             resolved_scene = "日常/放松"
         elif any(w in clean_text for w in ["助眠", "睡觉", "失眠", "催眠", "安静点", "静一静"]):
@@ -79,13 +81,29 @@ class SmartPlaylistWorkflow(BaseWorkflow):
         elif any(w in clean_text for w in ["英文歌", "英语"]):
             resolved_lang = "en"
 
+        # 起播曲目序号分析 (例如：“给我生成一份歌单 并且播放其中的第十首歌曲”)
+        from runtime.intent_router import parse_ordinal_num
+        play_ordinal = kwargs.get("play_ordinal", None)
+        if play_ordinal is None:
+            ord_match = re.search(r"第\s*([0-9一二两三四五六七八九十]+)\s*(?:首|个|曲)(?:歌曲|歌|曲目)?", clean_text)
+            if ord_match:
+                play_ordinal = parse_ordinal_num(ord_match.group(1))
+            elif any(k in clean_text for k in ["最后一首", "最后首", "最后那首", "最后的一首"]):
+                play_ordinal = -1
+
         # 数量特征
         if "一首" in clean_text or "1首" in clean_text:
-            resolved_count = 1
-        elif any(w in clean_text for w in ["几首", "歌单", "列表", "放些", "来点"]):
-            resolved_count = max(3, resolved_count)
+            if not any(w in clean_text for w in ["歌单", "列表", "几首"]):
+                resolved_count = 1
+        if any(w in clean_text for w in ["歌单", "列表"]):
+            resolved_count = max(10, resolved_count)
+        elif any(w in clean_text for w in ["几首", "放些", "来点"]):
+            resolved_count = max(5, resolved_count)
 
-        logger.info(f"[SmartPlaylistWorkflow] 解析意图槽位: mood='{resolved_mood}', scene='{resolved_scene}', lang='{resolved_lang}', count={resolved_count}")
+        if play_ordinal is not None and play_ordinal >= 0:
+            resolved_count = max(resolved_count, play_ordinal + 1)
+
+        logger.info(f"[SmartPlaylistWorkflow] 解析意图槽位: mood='{resolved_mood}', scene='{resolved_scene}', lang='{resolved_lang}', count={resolved_count}, play_ordinal={play_ordinal}")
 
         # 2. 从 Qt 客户端拉取本地曲库候选曲目
         search_reply = await self.runtime.call_client_tool(
@@ -195,13 +213,21 @@ class SmartPlaylistWorkflow(BaseWorkflow):
             mood_tag = resolved_mood.split("/")[0] if resolved_mood else "随心听"
             playlist_name = f"AI推荐: {scene_tag}{mood_tag}"
 
+            target_play_idx = 0
+            if play_ordinal is not None:
+                if play_ordinal == -1 or play_ordinal >= len(selected_tracks):
+                    target_play_idx = len(selected_tracks) - 1
+                elif play_ordinal >= 0:
+                    target_play_idx = play_ordinal
+
             create_reply = await self.runtime.call_client_tool(
                 session_id=session_id,
                 tool_name="create_temp_playlist",
                 arguments={
                     "name": playlist_name,
                     "track_indices": selected_indices,
-                    "auto_play": True
+                    "auto_play": True,
+                    "play_index": target_play_idx
                 },
                 timeout=5.0
             )
@@ -218,18 +244,22 @@ class SmartPlaylistWorkflow(BaseWorkflow):
                 }
                 return WorkflowOutput(answer_text=f"生成歌单时遇到错误：{err} 🥺", tools=[tool_card], success=False)
 
-            # 更新实体上下文（记录全部选取的曲目列表）
+            # 更新实体上下文（记录全部选取的曲目列表与当前起播歌曲）
             session_ctx.record_recommended_tracks(selected_tracks)
-            if selected_tracks:
-                session_ctx.record_played_track(selected_tracks[0])
+            played_track = selected_tracks[target_play_idx] if selected_tracks else {}
+            if played_track:
+                session_ctx.record_played_track(played_track)
 
-            first_track_title = selected_tracks[0].get("title", "") if selected_tracks else ""
+            played_title = played_track.get("title", "")
+            played_artist = played_track.get("artist", "")
+            disp_num = target_play_idx + 1
+
             tool_card = {
                 "name": "智能歌单生成",
                 "action": "create_temp_playlist",
                 "params": f"「{playlist_name}」 (收录 {len(selected_indices)} 首)",
                 "status": "success",
-                "result": f"已创建歌单并自动开播第一首《{first_track_title}》"
+                "result": f"已创建歌单并自动开播第 {disp_num} 首《{played_title}》"
             }
 
             song_list_text = "\n".join([
@@ -238,7 +268,7 @@ class SmartPlaylistWorkflow(BaseWorkflow):
             ])
 
             ans = (
-                f"已为你精心定制了专属智能歌单「{playlist_name}」，并已从第一首启动播放 🎧\n\n"
+                f"已为你精心定制了专属智能歌单「{playlist_name}」，并已从第 {disp_num} 首《{played_title}》启动播放 🎧\n\n"
                 f"**歌单曲目清单：**\n{song_list_text}\n\n"
                 f"祝你享受这段愉快的音乐时光！如需切歌或调整，随时吩咐我哦 ✨"
             )

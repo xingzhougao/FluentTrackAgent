@@ -110,11 +110,13 @@ async def run_integration_tests():
     assert intent_2.intent_type == "SEARCH_AND_PLAY", f"期望 SEARCH_AND_PLAY，实际: {intent_2.intent_type}"
     assert intent_2.params.get("query") == "稻香", f"上下文应准确解析出 稻香，实际: {intent_2.params.get('query')}"
 
+    p2 = dict(intent_2.params)
     wf_res_2 = await runtime.search_play_workflow.execute(
         session_id=session_id,
         request_id="req_002",
-        query=intent_2.params.get("query", ""),
-        raw_text=query_2
+        query=p2.pop("query", ""),
+        raw_text=query_2,
+        **p2
     )
     assert wf_res_2.success is True
     assert wf_res_2.tools[0]["action"] == "play_local_track"
@@ -138,31 +140,170 @@ async def run_integration_tests():
     )
     assert wf_res_3.success is True
     assert wf_res_3.tools[0]["action"] == "create_temp_playlist"
+    session_ctx.add_assistant_message(wf_res_3.answer_text, recommended_tracks=session_ctx.last_recommended_tracks)
     print(f"✅ Test 3 通过！工具卡片: {wf_res_3.tools[0]['params']}")
     print(f"   回答摘要:\n{wf_res_3.answer_text[:120]}...")
 
     # -------------------------------------------------------------
-    # 测试用例 4: 精准点歌：“播放晴天”
+    # 测试用例 4: 歌单指定序号精确选曲 (例如刚刚推荐了5首，用户说："我要播放第五首")
     # -------------------------------------------------------------
-    print("\n--- [Test 4] 精准点歌：“播放晴天” ---")
-    query_4 = "播放晴天"
+    print("\n--- [Test 4] 歌单指定序号选曲：“我要播放第五首” ---")
+    query_4 = "我要播放第五首"
     intent_4 = await IntentRouter.route_intent(query_4, context_session=session_ctx)
-    assert intent_4.intent_type == "SEARCH_AND_PLAY"
-    assert intent_4.params.get("query") == "晴天"
+    assert intent_4.intent_type == "SEARCH_AND_PLAY", f"期望 SEARCH_AND_PLAY，实际: {intent_4.intent_type}"
+    assert intent_4.params.get("ordinal_index") == 4, f"期望 ordinal_index=4 (第5首)，实际: {intent_4.params.get('ordinal_index')}"
 
+    p4 = dict(intent_4.params)
     wf_res_4 = await runtime.search_play_workflow.execute(
         session_id=session_id,
         request_id="req_004",
-        query=intent_4.params.get("query", ""),
-        raw_text=query_4
+        query=p4.pop("query", ""),
+        raw_text=query_4,
+        **p4
     )
     assert wf_res_4.success is True
     assert wf_res_4.tools[0]["action"] == "play_local_track"
-    assert "《晴天》" in wf_res_4.tools[0]["params"]
-    print(f"✅ Test 4 通过！已播放《晴天》！")
+    # 第五首应为青花瓷 (Test 3 中 track_indices 为 [0, 6, 8, 1, 2]，第5首为 2 即 青花瓷)
+    assert "青花瓷" in wf_res_4.tools[0]["params"], f"期望播放第五首青花瓷，实际: {wf_res_4.tools[0]['params']}"
+    print(f"✅ Test 4 通过！准确锁定歌单第 5 首并开播: {wf_res_4.tools[0]['params']}")
+    print(f"   回答摘要: {wf_res_4.answer_text}")
+
+    # -------------------------------------------------------------
+    # 测试用例 5: 精准点歌：“播放晴天”
+    # -------------------------------------------------------------
+    print("\n--- [Test 5] 精准点歌：“播放晴天” ---")
+    query_5 = "播放晴天"
+    intent_5 = await IntentRouter.route_intent(query_5, context_session=session_ctx)
+    assert intent_5.intent_type == "SEARCH_AND_PLAY"
+    assert intent_5.params.get("query") == "晴天"
+
+    p5 = dict(intent_5.params)
+    wf_res_5 = await runtime.search_play_workflow.execute(
+        session_id=session_id,
+        request_id="req_005",
+        query=p5.pop("query", ""),
+        raw_text=query_5,
+        **p5
+    )
+    assert wf_res_5.success is True
+    assert wf_res_5.tools[0]["action"] == "play_local_track"
+    assert "《晴天》" in wf_res_5.tools[0]["params"]
+    print(f"✅ Test 5 通过！已播放《晴天》！")
+
+    # -------------------------------------------------------------
+    # 测试用例 6: 模糊歌词搜歌与识别 (“我想听有一首歌 歌词是还记得家是唯一的城堡”)
+    # -------------------------------------------------------------
+    print("\n--- [Test 6] 歌词搜歌与识别：“我想听有一首歌 歌词是还记得家是唯一的城堡” ---")
+    query_6 = "我想听有一首歌 歌词是还记得家是唯一的城堡"
+    intent_6 = await IntentRouter.route_intent(query_6, context_session=session_ctx)
+    assert intent_6.intent_type == "SEARCH_AND_PLAY", f"期望 SEARCH_AND_PLAY，实际: {intent_6.intent_type}"
+    assert intent_6.params.get("lyrics_query") == "还记得家是唯一的城堡", f"期望提取歌词短句，实际: {intent_6.params.get('lyrics_query')}"
+
+    # 扩展 mock_call_client_tool 支持歌词检索返回
+    async def mock_call_client_tool_with_lyrics(session_id, tool_name, arguments, timeout=5.0):
+        print(f"   [Mock Qt Client] 收到工具调用: {tool_name}, 入参: {arguments}")
+        if tool_name == "search_local_music":
+            q = arguments.get("query", "").strip().lower()
+            if "家是唯一的城堡" in q or "还记得" in q or "稻香" in q:
+                matched = dict(MOCK_LOCAL_TRACKS[4]) # 稻香
+                matched["matched_lyric"] = "还记得你说家是唯一的城堡 随着稻香河流继续奔跑"
+                return {"success": True, "error": "", "result": {"tracks": [matched], "total_library_tracks": len(MOCK_LOCAL_TRACKS)}}
+            return {"success": True, "error": "", "result": {"tracks": [], "total_library_tracks": len(MOCK_LOCAL_TRACKS)}}
+        elif tool_name == "play_local_track":
+            idx = arguments.get("index", 0)
+            track = MOCK_LOCAL_TRACKS[idx] if idx < len(MOCK_LOCAL_TRACKS) else MOCK_LOCAL_TRACKS[0]
+            return {"success": True, "error": "", "result": {"status": "playing", "index": idx, "title": track["title"], "artist": track["artist"]}}
+        return {"success": False, "error": "未知工具", "result": {}}
+
+    runtime.call_client_tool = AsyncMock(side_effect=mock_call_client_tool_with_lyrics)
+
+    p6 = dict(intent_6.params)
+    wf_res_6 = await runtime.search_play_workflow.execute(
+        session_id=session_id,
+        request_id="req_006",
+        query=p6.pop("query", ""),
+        raw_text=query_6,
+        **p6
+    )
+    assert wf_res_6.success is True
+    assert wf_res_6.tools[0]["name"] == "歌词识曲"
+    assert "《稻香》" in wf_res_6.tools[0]["params"]
+    print(f"✅ Test 6 通过！通过歌词准确识别出《稻香》并开播: {wf_res_6.tools[0]['params']}")
+    print(f"   回答摘要: {wf_res_6.answer_text[:90]}...")
+
+    # -------------------------------------------------------------
+    # 测试用例 7: 生成歌单并且从指定序号起播 (“给我生成一份歌单 并且播放其中的第十首歌曲”)
+    # -------------------------------------------------------------
+    print("\n--- [Test 7] 生成歌单并指定第十首起播：“给我生成一份歌单 并且播放其中的第十首歌曲” ---")
+    query_7 = "给我生成一份歌单 并且播放其中的第十首歌曲"
+    intent_7 = await IntentRouter.route_intent(query_7, context_session=session_ctx)
+    assert intent_7.intent_type == "SMART_PLAYLIST", f"期望 SMART_PLAYLIST，实际: {intent_7.intent_type}"
+    assert intent_7.params.get("play_ordinal") == 9, f"期望 play_ordinal=9 (第10首)，实际: {intent_7.params.get('play_ordinal')}"
+
+    # 扩展 mock 工具支持 play_index
+    captured_play_index = None
+    async def mock_call_client_tool_v2(session_id, tool_name, arguments, timeout=5.0):
+        nonlocal captured_play_index
+        print(f"   [Mock Qt Client] 收到工具调用: {tool_name}, 入参: {arguments}")
+        if tool_name == "search_local_music":
+            return {"success": True, "error": "", "result": {"tracks": MOCK_LOCAL_TRACKS, "total_library_tracks": len(MOCK_LOCAL_TRACKS)}}
+        elif tool_name == "create_temp_playlist":
+            captured_play_index = arguments.get("play_index", 0)
+            indices = arguments.get("track_indices", [])
+            return {"success": True, "error": "", "result": {"playlist_id": "pl_10_test", "playlist_name": arguments.get("name"), "track_count": len(indices), "auto_played": True, "play_index": captured_play_index}}
+        elif tool_name == "play_local_track":
+            idx = arguments.get("playlist_index", arguments.get("index", 0))
+            track = MOCK_LOCAL_TRACKS[idx] if idx < len(MOCK_LOCAL_TRACKS) else MOCK_LOCAL_TRACKS[0]
+            return {"success": True, "error": "", "result": {"status": "playing", "index": idx, "title": track["title"], "artist": track["artist"]}}
+        return {"success": False, "error": "未知工具", "result": {}}
+
+    runtime.call_client_tool = AsyncMock(side_effect=mock_call_client_tool_v2)
+
+    p7 = dict(intent_7.params)
+    raw_7 = p7.pop("raw_text", query_7)
+    wf_res_7 = await runtime.smart_playlist_workflow.execute(
+        session_id=session_id,
+        request_id="req_007",
+        mood=p7.pop("mood", ""),
+        scene=p7.pop("scene", ""),
+        language=p7.pop("language", ""),
+        count=p7.pop("count", 1),
+        raw_text=raw_7,
+        **p7
+    )
+    assert wf_res_7.success is True
+    assert captured_play_index == 9, f"期望传递 play_index=9 给 Qt，实际: {captured_play_index}"
+    assert "第 10 首" in wf_res_7.tools[0]["result"]
+    assert "第 10 首" in wf_res_7.answer_text
+    session_ctx.add_assistant_message(wf_res_7.answer_text, recommended_tracks=session_ctx.last_recommended_tracks)
+    print(f"✅ Test 7 通过！创建包含 10 首歌曲的歌单，并成功指示 Qt 从第 10 首开播！")
+    print(f"   回答摘要: {wf_res_7.answer_text[:100]}...")
+
+    # -------------------------------------------------------------
+    # 测试用例 8: 跨轮多字复杂指代点播 (“播放你给我推荐的这份歌单的第10首歌曲”)
+    # -------------------------------------------------------------
+    print("\n--- [Test 8] 复杂指代点播：“播放你给我推荐的这份歌单的第10首歌曲” ---")
+    query_8 = "播放你给我推荐的这份歌单的第10首歌曲"
+    intent_8 = await IntentRouter.route_intent(query_8, context_session=session_ctx)
+    assert intent_8.intent_type == "SEARCH_AND_PLAY", f"期望 SEARCH_AND_PLAY，实际: {intent_8.intent_type}"
+    assert intent_8.params.get("ordinal_index") == 9, f"期望 ordinal_index=9，实际: {intent_8.params.get('ordinal_index')}"
+
+    p8 = dict(intent_8.params)
+    wf_res_8 = await runtime.search_play_workflow.execute(
+        session_id=session_id,
+        request_id="req_008",
+        query=p8.pop("query", ""),
+        raw_text=query_8,
+        **p8
+    )
+    assert wf_res_8.success is True
+    assert wf_res_8.tools[0]["name"] == "歌单选曲"
+    assert "第 10 首" in wf_res_8.tools[0]["params"]
+    print(f"✅ Test 8 通过！成功从推荐歌单中精准切换并播放第 10 首: {wf_res_8.tools[0]['params']}")
+    print(f"   回答摘要: {wf_res_8.answer_text}")
 
     print("\n" + "=" * 70)
-    print("🎉 全部 4 项端到端全链路集成测试 100% 验证通过！")
+    print("🎉 全部 8 项端到端全链路集成测试 100% 验证通过！")
     print("=" * 70)
     return True
 
@@ -170,3 +311,4 @@ async def run_integration_tests():
 if __name__ == "__main__":
     passed = asyncio.run(run_integration_tests())
     sys.exit(0 if passed else 1)
+

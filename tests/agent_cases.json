@@ -205,5 +205,47 @@
     "query": "帮我写一段 Python 快速排序算法",
     "expected_intent": "CHAT",
     "expected_action": ""
+  },
+  {
+    "id": "tc_context_ord_fifth",
+    "query": "我要播放第五首",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {
+      "ordinal_index": 4
+    }
+  },
+  {
+    "id": "tc_search_lyrics_daoxiang",
+    "query": "我想听有一首歌 歌词是还记得家是唯一的城堡",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {
+      "lyrics_query": "还记得家是唯一的城堡"
+    }
+  },
+  {
+    "id": "tc_smart_playlist_happy",
+    "query": "给我生成一份轻松愉快歌曲的歌单",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist"
+  },
+  {
+    "id": "tc_smart_playlist_ord_tenth",
+    "query": "给我生成一份歌单 并且播放其中的第十首歌曲",
+    "expected_intent": "SMART_PLAYLIST",
+    "expected_action": "smart_playlist",
+    "expected_params": {
+      "play_ordinal": 9
+    }
+  },
+  {
+    "id": "tc_context_playlist_ord_tenth",
+    "query": "播放你给我推荐的这份歌单的第10首歌曲",
+    "expected_intent": "SEARCH_AND_PLAY",
+    "expected_action": "search_and_play",
+    "expected_params": {
+      "ordinal_index": 9
+    }
   }
 ]

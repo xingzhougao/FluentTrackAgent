@@ -4,6 +4,10 @@
 #include "../MusicLibraryModel.h"
 #include "../PlaylistManager.h"
 #include <QJsonArray>
+#include <QFile>
+#include <QFileInfo>
+#include <QTextStream>
+#include <QRegularExpression>
 #include <QDebug>
 #include <algorithm>
 
@@ -251,6 +255,7 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
         MusicTrack track;
         int score;
         bool isFavorite;
+        QString matchedLyric;
     };
 
     QVector<ScoredTrack> matches;
@@ -261,11 +266,13 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
         bool isFav = m_favoriteManager ? m_favoriteManager->isFavorite(t.filePath) : t.favorite;
 
         if (query.isEmpty() || query == "*") {
-            matches.append({i, t, 10, isFav});
+            matches.append({i, t, 10, isFav, ""});
             continue;
         }
 
         int score = 0;
+        QString matchedLyric;
+
         if (t.title.compare(query, Qt::CaseInsensitive) == 0) {
             score = 100;
         } else if (t.artist.compare(query, Qt::CaseInsensitive) == 0) {
@@ -278,8 +285,57 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
             score = 30;
         }
 
+        // 尝试从同名 .lrc 文件中检索歌词内容
+        if (query.length() >= 2) {
+            QString lrcPath = QFileInfo(t.filePath).absolutePath() + "/" + QFileInfo(t.filePath).completeBaseName() + ".lrc";
+            QFile lrcFile(lrcPath);
+            if (lrcFile.exists() && lrcFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream in(&lrcFile);
+                static const QRegularExpression timeTagRegex(R"(\[\d{1,2}:\d{2}(?:\.\d{1,3})?\])");
+                while (!in.atEnd()) {
+                    QString line = in.readLine().trimmed();
+                    line.remove(timeTagRegex);
+                    line = line.trimmed();
+                    if (line.isEmpty()) continue;
+
+                    // 1. 歌词完整包含 query
+                    if (line.contains(query, Qt::CaseInsensitive)) {
+                        if (score < 85) score = 85;
+                        matchedLyric = line;
+                        break;
+                    }
+
+                    // 2. 歌词模糊关键词重叠匹配 (应对用户少记/漏记一两个字，如“还记得家是唯一的城堡” vs “还记得你说家是唯一的城堡”)
+                    if (query.length() >= 4) {
+                        QString sub1 = query.left(query.length() / 2);
+                        QString sub2 = query.right(query.length() - query.length() / 2);
+                        if (line.contains(sub1, Qt::CaseInsensitive) && line.contains(sub2, Qt::CaseInsensitive)) {
+                            if (score < 80) score = 80;
+                            matchedLyric = line;
+                            break;
+                        }
+
+                        int hitCount = 0;
+                        int totalWindows = 0;
+                        for (int s = 0; s <= query.length() - 3; s += 2) {
+                            totalWindows++;
+                            if (line.contains(query.mid(s, 3), Qt::CaseInsensitive)) {
+                                hitCount++;
+                            }
+                        }
+                        if (hitCount >= 2 && hitCount * 2 >= totalWindows) {
+                            if (score < 75) score = 75;
+                            matchedLyric = line;
+                            break;
+                        }
+                    }
+                }
+                lrcFile.close();
+            }
+        }
+
         if (score > 0) {
-            matches.append({i, t, score, isFav});
+            matches.append({i, t, score, isFav, matchedLyric});
         }
     }
 
@@ -300,6 +356,7 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
         item["duration_ms"] = m.track.duration;
         item["is_favorite"] = m.isFavorite;
         item["score"] = m.score;
+        item["matched_lyric"] = m.matchedLyric;
         trackArr.append(item);
     }
 
@@ -317,31 +374,52 @@ QJsonObject ToolDispatcher::handlePlayLocalTrack(const QJsonObject &args)
     }
 
     int targetIndex = -1;
+    MusicLibraryModel *targetModel = m_library;
 
-    if (args.contains("index")) {
-        targetIndex = args.value("index").toInt(-1);
-    } else if (args.contains("file_path")) {
-        QString path = args.value("file_path").toString();
-        targetIndex = m_library->indexOfFilePath(path);
-    } else if (args.contains("title")) {
-        QString title = args.value("title").toString().trimmed();
-        for (int i = 0; i < m_library->count(); ++i) {
-            const MusicTrack t = m_library->trackAt(i);
-            if (t.title.compare(title, Qt::CaseInsensitive) == 0 ||
-                t.title.contains(title, Qt::CaseInsensitive)) {
-                targetIndex = i;
-                break;
+    // 如果当前正在播放歌单，且参数指定了歌单内序号或文件路径，优先在当前歌单中切换播放以保持歌单上下文
+    if (m_player && m_player->currentLibrary() && m_player->currentLibrary() != m_library) {
+        MusicLibraryModel *curPl = m_player->currentLibrary();
+        if (args.contains("playlist_index")) {
+            int pIdx = args.value("playlist_index").toInt(-1);
+            if (pIdx >= 0 && pIdx < curPl->count()) {
+                targetModel = curPl;
+                targetIndex = pIdx;
+            }
+        } else if (args.contains("file_path")) {
+            int pIdx = curPl->indexOfFilePath(args.value("file_path").toString());
+            if (pIdx >= 0) {
+                targetModel = curPl;
+                targetIndex = pIdx;
             }
         }
     }
 
-    if (targetIndex < 0 || targetIndex >= m_library->count()) {
-        throw std::runtime_error("未在本地曲库找到该曲目或索引超出范围");
+    if (targetIndex < 0) {
+        if (args.contains("index")) {
+            targetIndex = args.value("index").toInt(-1);
+        } else if (args.contains("file_path")) {
+            QString path = args.value("file_path").toString();
+            targetIndex = m_library->indexOfFilePath(path);
+        } else if (args.contains("title")) {
+            QString title = args.value("title").toString().trimmed();
+            for (int i = 0; i < m_library->count(); ++i) {
+                const MusicTrack t = m_library->trackAt(i);
+                if (t.title.compare(title, Qt::CaseInsensitive) == 0 ||
+                    t.title.contains(title, Qt::CaseInsensitive)) {
+                    targetIndex = i;
+                    break;
+                }
+            }
+        }
     }
 
-    m_player->playFromModel(m_library, targetIndex);
+    if (targetIndex < 0 || targetIndex >= targetModel->count()) {
+        throw std::runtime_error("未在本地曲库或当前歌单找到该曲目或索引超出范围");
+    }
 
-    MusicTrack t = m_library->trackAt(targetIndex);
+    m_player->playFromModel(targetModel, targetIndex);
+
+    MusicTrack t = targetModel->trackAt(targetIndex);
     QJsonObject res;
     res["status"] = "playing";
     res["index"] = targetIndex;
@@ -363,6 +441,7 @@ QJsonObject ToolDispatcher::handleCreateTempPlaylist(const QJsonObject &args)
 
     QString name = args.value("name").toString("AI智能推荐歌单");
     bool autoPlay = args.value("auto_play").toBool(true);
+    int playIndex = args.value("play_index").toInt(0);
     QJsonArray indices = args.value("track_indices").toArray();
     QJsonArray paths = args.value("track_paths").toArray();
 
@@ -392,7 +471,10 @@ QJsonObject ToolDispatcher::handleCreateTempPlaylist(const QJsonObject &args)
     }
 
     if (autoPlay && plModel && plModel->count() > 0) {
-        m_player->playFromModel(plModel, 0);
+        if (playIndex < 0 || playIndex >= plModel->count()) {
+            playIndex = 0;
+        }
+        m_player->playFromModel(plModel, playIndex);
     }
 
     QJsonObject res;
@@ -400,6 +482,7 @@ QJsonObject ToolDispatcher::handleCreateTempPlaylist(const QJsonObject &args)
     res["playlist_name"] = name;
     res["track_count"] = addedCount;
     res["auto_played"] = autoPlay;
+    res["play_index"] = playIndex;
     return res;
 }
 
