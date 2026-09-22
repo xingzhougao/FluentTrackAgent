@@ -31,8 +31,17 @@ async def test_all():
         ("帮我播放一下歌曲爱要怎么说出口", "SEARCH_AND_PLAY", "爱要怎么说出口", ""),
         ("帮我播放一下歌曲冬眠", "SEARCH_AND_PLAY", "冬眠", ""),
         ("播放歌曲晴天", "SEARCH_AND_PLAY", "晴天", ""),
+        ("播放一下张杰的代表作歌曲着魔", "SEARCH_AND_PLAY", "着魔", "张杰"),
         ("帮我播放一下 马天宇的歌曲 该死的温柔", "SEARCH_AND_PLAY", "该死的温柔", "马天宇"),
         ("帮我播放一下马天宇的该死的温柔", "SEARCH_AND_PLAY", "该死的温柔", "马天宇"),
+        ("我想听周杰伦最火的那首七里香", "SEARCH_AND_PLAY", "七里香", "周杰伦"),
+        ("放一首陈奕迅很好听的孤勇者", "SEARCH_AND_PLAY", "孤勇者", "陈奕迅"),
+        ("来首许嵩脍炙人口的经典老歌断桥残雪", "SEARCH_AND_PLAY", "断桥残雪", "许嵩"),
+        ("帮我找一下电影大话西游的主题曲一生所爱", "SEARCH_AND_PLAY", "一生所爱", "电影大话西游"),
+        ("播放马天宇的成名曲该死的温柔", "SEARCH_AND_PLAY", "该死的温柔", "马天宇"),
+        ("我想听王菲经典老歌红豆", "SEARCH_AND_PLAY", "红豆", "王菲"),
+        ("我想听那首很火的漠河舞厅", "SEARCH_AND_PLAY", "漠河舞厅", ""),
+        ("放一下最新单曲水星记", "SEARCH_AND_PLAY", "水星记", ""),
         ("播放周杰伦的歌曲 晴天", "SEARCH_AND_PLAY", "晴天", "周杰伦"),
         ("放一首陈奕迅的歌 孤勇者", "SEARCH_AND_PLAY", "孤勇者", "陈奕迅"),
         ("放一首周杰伦的歌", "SEARCH_AND_PLAY", "", "周杰伦"),
@@ -82,7 +91,7 @@ async def test_all():
     for idx, c in enumerate(p2p_cands, 1):
         print(f"  [{idx}] [{c.format.upper()}] 《{c.title}》- {c.artist} ({c.bitrate}kbps) tag={c.extra.get('version_tag')}")
     print("✅ TEST 3 通过：P2P 成功检索到真实周杰伦原版音频！\n")
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(4.0)
 
     print("=======================================================")
     print("TEST 4: 验证 ProviderManager 多主力源组合优先级")

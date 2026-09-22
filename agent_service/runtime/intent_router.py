@@ -55,7 +55,165 @@ def parse_ordinal_num(num_str: str) -> Optional[int]:
             return tens + c_map[num_str[2]] - 1
         return tens - 1
 
-    return None
+MODIFIERS_LIST = [
+    # 动作/副词/指代
+    "一下", "一首", "首", "个", "点", "曲", "一曲",
+    "那首", "那一首", "这首", "这一首", "哪首",
+    # 评价/热度/流行度/地位
+    "代表作歌曲", "代表作品", "代表作", "成名之作", "成名曲", "主打单曲", "主打歌", "主打曲",
+    "经典歌曲", "经典老歌", "经典之作", "传世之作", "经典名曲", "经典",
+    "热门歌曲", "热门单曲", "热门曲目", "热门",
+    "最火的那首", "最火这首", "最火的歌", "最火歌曲", "最火的", "最火",
+    "比较火的", "挺火的", "很火的歌", "很火的", "超火的", "超火", "很火", "爆款",
+    "比较出名的", "很有名的", "出名的歌", "出名的", "著名的", "知名", "比较出名", "很有名", "出名",
+    "特别好听的", "很好听的", "好听的那首", "好听的歌", "好听的", "动听的", "优美的", "好听",
+    "脍炙人口的", "红极一时的", "耳熟能详的", "家喻户晓的", "脍炙人口", "耳熟能详",
+    # 类别/属性/载体
+    "最新歌曲", "最新单曲", "最新出的", "最新", "流行歌曲", "老歌", "新歌", "单曲", "神曲",
+    "主题曲", "片头曲", "片尾曲", "背景音乐", "原声带", "配乐", "插曲", "原声", "ost", "bgm",
+    "现场版", "演唱会版", "live版", "原版", "无损版", "高清版",
+    # 年代/时间/版本
+    "当年的", "以前的", "曾经的", "小时候听的", "那时候的", "早期的", "当年", "曾经", "以前",
+    # 谓语/演唱行为修饰
+    "唱的那首", "唱的这首", "演唱的那首", "演唱的这首", "唱的", "演唱的", "表演的", "翻唱的", "改编的", "原唱的", "合唱的",
+    "演唱", "原唱", "翻唱", "合唱", "唱得", "唱",
+    # 冗余通用词
+    "这首歌曲", "这首歌", "歌曲", "音乐", "曲目", "单曲", "歌",
+    # 程度副词
+    "特别", "非常", "格外", "相当", "超级", "挺", "很", "比较",
+    # 引导连接词
+    "名字叫", "名为", "叫做", "叫", "是", "为"
+]
+MODIFIERS_LIST.sort(key=len, reverse=True)
+
+MODIFIERS_PATTERN = re.compile(
+    r"^(?:" + "|".join(re.escape(m) for m in MODIFIERS_LIST) + r")\s*",
+    re.IGNORECASE
+)
+
+ARTIST_CLEANER_PATTERN = re.compile(
+    r"(?:"
+    r"^(?:一下|一首|首|个|点|曲|歌手|音乐人|组合|乐队)\s*|"
+    r"(?:\d{4}年(?:出的?|发行的?|发布的?|发表的?)?)$|"
+    r"\s*(?:" + "|".join(re.escape(m) for m in MODIFIERS_LIST) + r")$"
+    r")",
+    re.IGNORECASE
+)
+
+MIDDLE_MODIFIERS = [m for m in MODIFIERS_LIST if len(m) >= 2 and m not in {"特别", "非常", "格外", "相当", "超级", "比较", "单曲", "歌曲", "音乐", "曲目"}]
+MIDDLE_MODIFIERS.sort(key=len, reverse=True)
+
+NOT_SONG_NAMES = {"音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"}
+
+
+def clean_song_title(raw: str) -> str:
+    """循环剥离所有前置修饰语、量词与定语"""
+    text = raw.strip().strip('《》"\'“”：: ')
+    while True:
+        stripped = MODIFIERS_PATTERN.sub("", text).strip()
+        stripped = stripped.strip('《》"\'“”：: ')
+        if stripped == text:
+            break
+        text = stripped
+    return text
+
+
+def clean_artist_name(raw: str) -> str:
+    """清理歌手名前缀与后置修饰语（如 '张杰唱的' -> '张杰', '周杰伦最火' -> '周杰伦', '林俊杰2008年出' -> '林俊杰'）"""
+    text = raw.strip().strip('《》"\'“”：: ')
+    while True:
+        stripped = ARTIST_CLEANER_PATTERN.sub("", text).strip()
+        stripped = stripped.strip('《》"\'“”：: ')
+        if stripped == text:
+            break
+        text = stripped
+    return text
+
+
+def is_pure_modifier(text: str) -> bool:
+    """检查一段文本是否完全由修饰词组成（不包含实际人名/歌名实体）"""
+    t = text.strip()
+    cleaned = clean_song_title(t)
+    return len(cleaned) == 0
+
+
+def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
+    """
+    智能自然语言音乐实体抽取器：支持全场景口语化句式提取
+    能够将各类修饰语（代表作、最火、经典、当年、唱的、主题曲等）彻底剥离，
+    精确输出干净的 (artist, song)。
+    """
+    clean = text.strip()
+
+    # 1. 匹配标准指令前缀并去除
+    cmd_prefix = re.compile(
+        r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
+        r"(?:播放|放|听|播|来|搜|找|点|整)\s*"
+        r"(?:一下|一首|首|个|点|曲)?\s*",
+        re.IGNORECASE
+    )
+    body = cmd_prefix.sub("", clean).strip()
+
+    if body in NOT_SONG_NAMES or not body:
+        return None
+
+    art = ""
+    song = ""
+
+    # 句型 1: 包含“的”字
+    if "的" in body:
+        parts = body.split("的")
+        # 如果第一段是纯修饰词（如“我想听那首很火的漠河舞厅” -> parts[0] = "那首很火"）
+        if is_pure_modifier(parts[0]):
+            art = ""
+            rest = "的".join(parts[1:])
+            song = clean_song_title(rest)
+        else:
+            # 第一段是歌手（或歌手+修饰，如 '周杰伦最火' -> '周杰伦', '张杰' -> '张杰'）
+            art = clean_artist_name(parts[0])
+            rest = "的".join(parts[1:])
+            song = clean_song_title(rest)
+
+    # 句型 2: 中间包含明显的特征修饰词（如“王菲经典老歌红豆”, “周杰伦主打歌晴天”）
+    else:
+        found_mod = False
+        for mod in MIDDLE_MODIFIERS:
+            idx = body.find(mod)
+            if idx > 0 and idx + len(mod) < len(body):
+                left = body[:idx].strip()
+                right = body[idx + len(mod):].strip()
+                left_art = clean_artist_name(left)
+                right_song = clean_song_title(right)
+                if left_art and right_song and len(left_art) in [2, 3, 4, 5, 6] and not is_pure_modifier(left_art):
+                    art = left_art
+                    song = right_song
+                    found_mod = True
+                    break
+
+        if not found_mod:
+            # 句型 3: 书名号提取（例如：“周杰伦《晴天》”, “《晴天》”）
+            if "《" in body and "》" in body:
+                m = re.search(r"^(.*?)\s*《(.*?)》", body)
+                if m:
+                    art = clean_artist_name(m.group(1))
+                    song = m.group(2).strip()
+                else:
+                    song = clean_song_title(body)
+            # 句型 4: 空格分隔（例如：“周杰伦 晴天”）
+            elif " " in body:
+                parts = body.split(None, 1)
+                p0 = clean_artist_name(parts[0])
+                p1 = clean_song_title(parts[1])
+                if len(p0) in [2, 3, 4] and p1 and p1 not in NOT_SONG_NAMES and not is_pure_modifier(p0):
+                    art = p0
+                    song = p1
+                else:
+                    song = clean_song_title(body)
+            # 句型 5: 直接纯歌名输入
+            else:
+                song = clean_song_title(body)
+
+    return art, song
 
 
 class IntentRouter:
@@ -112,35 +270,12 @@ class IntentRouter:
                     raw_target = raw_target[:-len(suffix)].strip()
                     break
 
-            while True:
-                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", raw_target).strip()
-                if stripped == raw_target:
-                    break
-                raw_target = stripped
-
-            raw_target = raw_target.strip("《》\"'“”：: ")
-            song_q = raw_target
-            art_q = ""
-            known_singers = [
-                "周杰伦", "林俊杰", "陈奕迅", "王菲", "邓紫棋", "薛之谦", "张学友",
-                "蔡依林", "五月天", "李荣浩", "孙燕姿", "张惠妹", "莫文蔚", "许嵩",
-                "毛不易", "华晨宇", "梁静茹", "汪苏泷", "朴树", "李健", "刀郎"
-            ]
-            if "的" in raw_target:
-                parts = raw_target.split("的", 1)
-                p0 = parts[0].strip()
-                p1 = parts[1].strip()
-                p1 = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", p1).strip()
-                if (any(s in p0 for s in known_singers) or (len(p0) in [2, 3, 4] and len(p1) >= 1)):
-                    art_q = p0
-                    song_q = p1
-                else:
-                    song_q = raw_target
-            elif " " in raw_target:
-                parts = raw_target.split(None, 1)
-                if len(parts) == 2 and (any(s in parts[0] for s in known_singers) or len(parts[0]) in [2, 3, 4]):
-                    art_q = parts[0].strip()
-                    song_q = parts[1].strip()
+            parsed_ent = extract_music_entity(raw_target)
+            if parsed_ent and (parsed_ent[0] or parsed_ent[1]):
+                art_q, song_q = parsed_ent
+            else:
+                art_q = ""
+                song_q = clean_song_title(raw_target)
 
             return IntentResult(
                 intent_type="NETWORK_DISCOVERY",
@@ -292,115 +427,26 @@ class IntentRouter:
                 params={"raw_text": clean}
             )
 
-        # 9. 精准与模糊点歌 (SEARCH_AND_PLAY)
-        # 匹配书名号，例如 “播放《晴天》”
-        title_in_quotes = re.search(r"《([^》]+)》", clean)
-        if title_in_quotes and any(w in lower for w in ["播放", "放", "听", "播"]):
-            return IntentResult(
-                intent_type="SEARCH_AND_PLAY",
-                action="search_and_play",
-                params={"query": title_in_quotes.group(1).strip()}
-            )
-
-        # 匹配 “播放[歌名]” / “放一首[歌名]” / “我想听[歌名]”
-        # 排除纯控制词汇
-        not_song_names = ["音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"]
-
-        # 1. 匹配歌手专有句式与带“的歌/的歌曲”的句式：
-        # 例如：
-        # - “放一首周杰伦的歌” / “播放周杰伦的歌曲” (纯歌手点歌，query="")
-        # - “帮我播放一下 马天宇的歌曲 该死的温柔” / “播放周杰伦的歌曲晴天” / “放一首陈奕迅的歌 孤勇者” (歌手+歌名组合)
-        artist_song_match = re.search(
-            r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
-            r"(?:播放|放|听|播|来|搜|找)\s*"
-            r"(?:一下|一首|首|个|点|曲)?\s*"
-            r"([^\s，,。！？的]+)的(?:这首歌曲|这首歌|歌曲|音乐|曲目|歌)"
-            r"(?:\s*(?:叫|是|为)?\s*([^\r\n，,。！？]*))?$",
-            clean
-        )
-        if artist_song_match:
-            art = artist_song_match.group(1).strip()
-            art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", art).strip()
-            rest = (artist_song_match.group(2) or "").strip()
-            while True:
-                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", rest).strip()
-                stripped = stripped.strip("《》\"'“”：: ")
-                if stripped == rest:
-                    break
-                rest = stripped
-
-            if art not in not_song_names:
-                if not rest or rest in not_song_names:
-                    return IntentResult(
-                        intent_type="SEARCH_AND_PLAY",
-                        action="search_and_play",
-                        params={"artist": art, "query": ""}
-                    )
-                else:
-                    return IntentResult(
-                        intent_type="SEARCH_AND_PLAY",
-                        action="search_and_play",
-                        params={"artist": art, "query": rest}
-                    )
-
-        # 2. 匹配通用点歌：例如 “帮我播放一下歌曲爱要怎么说出口”, “帮我播放一下 周杰伦的爱情废柴”, “播放歌曲冬眠”, “我想听晴天”
-        play_match = re.search(
-            r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
-            r"(?:播放|放|听|播|来|搜|找)\s*"
-            r"(?:一下|一首|首|个|点|曲)?\s*"
-            r"(?:歌曲|这首歌曲|这首歌|音乐|曲目|歌)?\s*"
-            r"([^\r\n，,。！？]{2,40})$",
-            clean
-        )
-        if play_match:
-            raw_cand = play_match.group(1).strip()
-            song_candidate = raw_cand
-            while True:
-                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", song_candidate).strip()
-                stripped = stripped.strip("《》\"'“”：: ")
-                if stripped == song_candidate:
-                    break
-                song_candidate = stripped
-
-            if song_candidate and song_candidate not in not_song_names:
-                # 检查是否包含歌手与歌名组合，例如 "周杰伦的晴天"、"周杰伦的爱情废柴"
-                if "的" in song_candidate:
-                    parts = song_candidate.split("的", 1)
-                    parsed_art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[0]).strip()
-                    parsed_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[1]).strip()
-                    while True:
-                        stripped_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parsed_q).strip()
-                        stripped_q = stripped_q.strip("《》\"'“”：: ")
-                        if stripped_q == parsed_q:
-                            break
-                        parsed_q = stripped_q
-                    if parsed_q and parsed_q not in not_song_names:
-                        return IntentResult(
-                            intent_type="SEARCH_AND_PLAY",
-                            action="search_and_play",
-                            params={"artist": parsed_art, "query": parsed_q}
-                        )
-                elif " " in song_candidate:
-                    parts = song_candidate.split(None, 1)
-                    if len(parts) == 2 and len(parts[0]) in [2, 3, 4] and len(parts[1]) >= 1:
-                        parsed_art = parts[0].strip()
-                        parsed_q = parts[1].strip()
-                        while True:
-                            stripped_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parsed_q).strip()
-                            stripped_q = stripped_q.strip("《》\"'“”：: ")
-                            if stripped_q == parsed_q:
-                                break
-                            parsed_q = stripped_q
-                        if parsed_q and parsed_q not in not_song_names:
-                            return IntentResult(
-                                intent_type="SEARCH_AND_PLAY",
-                                action="search_and_play",
-                                params={"artist": parsed_art, "query": parsed_q}
-                            )
+        # 9. 精准与全场景口语化点歌 (SEARCH_AND_PLAY)
+        # 支持各种复杂修饰语、定语与口语句式，如：
+        # - “播放一下张杰的代表作歌曲着魔” -> artist="张杰", query="着魔"
+        # - “帮我播放一下 马天宇的歌曲 该死的温柔” -> artist="马天宇", query="该死的温柔"
+        # - “我想听周杰伦最火的那首七里香” -> artist="周杰伦", query="七里香"
+        # - “放一首陈奕迅很好听的孤勇者” -> artist="陈奕迅", query="孤勇者"
+        # - “来首许嵩脍炙人口的经典老歌断桥残雪” -> artist="许嵩", query="断桥残雪"
+        # - “播放一下林俊杰2008年出的那首醉赤壁” -> artist="林俊杰", query="醉赤壁"
+        # - “帮我找一下电影大话西游的主题曲一生所爱” -> artist="电影大话西游", query="一生所爱"
+        # - “放一首周杰伦的歌” -> artist="周杰伦", query=""
+        # - “帮我播放一下歌曲爱要怎么说出口” -> artist="", query="爱要怎么说出口"
+        # - “播放歌曲冬眠” -> artist="", query="冬眠"
+        entity = extract_music_entity(clean)
+        if entity:
+            art, song = entity
+            if art or song:
                 return IntentResult(
                     intent_type="SEARCH_AND_PLAY",
                     action="search_and_play",
-                    params={"query": song_candidate}
+                    params={"artist": art, "query": song}
                 )
 
         return None

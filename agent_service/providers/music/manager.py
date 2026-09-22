@@ -44,7 +44,7 @@ class MusicProviderManager:
         query: str,
         artist: str = "",
         limit: int = 5,
-        timeout: float = 32.0
+        timeout: float = 38.0
     ) -> List[TrackCandidate]:
         """
         多源并发检索、去重与按主力源优先排序
