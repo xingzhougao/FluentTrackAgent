@@ -104,7 +104,9 @@ class ConfirmationManager:
             v_tag = extra.get("version_tag", "原版音频")
             is_netdisk = bool(extra.get("is_netdisk", False))
 
-            if c.provider == "soulseek_p2p":
+            if is_netdisk:
+                source_label = "网盘转存 (需扫码)"
+            elif c.provider == "soulseek_p2p":
                 source_label = "Soulseek P2P"
             elif c.provider == "xiageba":
                 source_label = "下歌吧 (刘明野)"
@@ -113,7 +115,7 @@ class ConfirmationManager:
 
             sz_bytes = c.size_bytes or 0
             size_str = f"{sz_bytes / (1024 * 1024):.1f} MB" if sz_bytes > 0 else (
-                "网盘转存" if is_netdisk else "320k"
+                "第三方网盘" if is_netdisk else "320k"
             )
 
             candidates_data.append({

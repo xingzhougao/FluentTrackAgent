@@ -1,6 +1,7 @@
 #include "MusicAgentController.h"
 #include <QDebug>
 #include <QUuid>
+#include <QSettings>
 
 MusicAgentController::MusicAgentController(QObject *parent)
     : QObject(parent)
@@ -9,6 +10,7 @@ MusicAgentController::MusicAgentController(QObject *parent)
     , m_agentStatus("offline")
     , m_statusText("服务未连接")
     , m_currentModel("qwen2.5:7b")
+    , m_autoDownloadMode(QSettings().value("Agent/AutoDownloadMode", false).toBool())
 {
     connect(m_transport, &MusicAgentTransport::connected, this, &MusicAgentController::onTransportConnected);
     connect(m_transport, &MusicAgentTransport::disconnected, this, &MusicAgentController::onTransportDisconnected);
@@ -63,6 +65,30 @@ QString MusicAgentController::currentModel() const
     return m_currentModel;
 }
 
+bool MusicAgentController::autoDownloadMode() const
+{
+    return m_autoDownloadMode;
+}
+
+void MusicAgentController::setAutoDownloadMode(bool enabled)
+{
+    if (m_autoDownloadMode == enabled) return;
+    m_autoDownloadMode = enabled;
+    QSettings settings;
+    settings.setValue("Agent/AutoDownloadMode", m_autoDownloadMode);
+    emit autoDownloadModeChanged(m_autoDownloadMode);
+
+    if (m_transport->isConnected()) {
+        QJsonObject payload;
+        payload["auto_download"] = m_autoDownloadMode;
+        QJsonObject req;
+        req["type"] = "update_preference";
+        req["request_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        req["payload"] = payload;
+        m_transport->sendJson(req);
+    }
+}
+
 AgentMessageModel* MusicAgentController::messageModel() const
 {
     return m_messageModel;
@@ -83,9 +109,10 @@ void MusicAgentController::sendMessage(const QString &text)
         return;
     }
 
-    // 3. 构建 user_message 协议包
+    // 3. 构建 user_message 协议包 (携带 auto_download 偏好模式)
     QJsonObject payload;
     payload["text"] = trimmed;
+    payload["auto_download"] = m_autoDownloadMode;
 
     QJsonObject req;
     req["type"] = "user_message";
@@ -156,6 +183,15 @@ void MusicAgentController::onTransportConnected()
     emit isConnectedChanged(true);
     emit agentStatusChanged(m_agentStatus);
     emit statusTextChanged(m_statusText);
+
+    // 连接建立后即刻同步当前下载模式偏好
+    QJsonObject prefPayload;
+    prefPayload["auto_download"] = m_autoDownloadMode;
+    QJsonObject prefReq;
+    prefReq["type"] = "update_preference";
+    prefReq["request_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    prefReq["payload"] = prefPayload;
+    m_transport->sendJson(prefReq);
 }
 
 void MusicAgentController::onTransportDisconnected()

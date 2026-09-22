@@ -20,6 +20,7 @@ class MusicAgentController : public QObject
     Q_PROPERTY(QString agentStatus READ agentStatus NOTIFY agentStatusChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(QString currentModel READ currentModel NOTIFY currentModelChanged)
+    Q_PROPERTY(bool autoDownloadMode READ autoDownloadMode WRITE setAutoDownloadMode NOTIFY autoDownloadModeChanged)
     Q_PROPERTY(AgentMessageModel* messageModel READ messageModel CONSTANT)
 
 public:
@@ -30,6 +31,7 @@ public:
     QString agentStatus() const;
     QString statusText() const;
     QString currentModel() const;
+    bool autoDownloadMode() const;
     AgentMessageModel* messageModel() const;
 
     void setPlayerController(PlayerController *player);
@@ -44,12 +46,14 @@ public slots:
     void reconnect();
     void respondConfirmation(const QString &confirmId, bool confirmed);
     void respondCandidateSelection(const QString &confirmId, const QString &selectedId, bool cancelled);
+    void setAutoDownloadMode(bool enabled);
 
 signals:
     void isConnectedChanged(bool connected);
     void agentStatusChanged(const QString &status);
     void statusTextChanged(const QString &text);
     void currentModelChanged(const QString &model);
+    void autoDownloadModeChanged(bool enabled);
     void errorOccurred(const QString &error);
     void confirmationRequired(const QString &confirmId, const QString &title, const QString &message, const QString &details);
     void candidateSelectionRequired(const QString &confirmId, const QString &title, const QString &query, const QString &artist, const QJsonArray &candidates);
@@ -68,6 +72,7 @@ private:
     QString m_agentStatus; // "ready", "thinking", "offline"
     QString m_statusText;
     QString m_currentModel;
+    bool m_autoDownloadMode;
 };
 
 #endif // MUSICAGENTCONTROLLER_H

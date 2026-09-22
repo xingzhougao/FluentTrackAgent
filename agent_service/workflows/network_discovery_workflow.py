@@ -112,29 +112,38 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
                 success=False
             )
 
-        # Step 3: 向用户弹窗呈现最接近的 5 条候选版本，由用户自主选择下载版本
-        selected_id = await self.runtime.confirmation_manager.request_candidate_selection(
-            session_id=session_id,
-            query=clean_q or clean_art,
-            artist=clean_art,
-            candidates=candidates[:5]
-        )
+        # Step 3: 根据用户设置的模式决定：自动模式直接选取首选最优，自选模式弹出 5 条候选
+        pref_auto = session_ctx.preferences.get("auto_download", False)
+        # 若外部显式指定了 auto_download 参数则以显式为准，否则遵循用户模式
+        is_auto_mode = auto_download if ("auto_download" in kwargs) else pref_auto
 
-        if selected_id is None:
-            # 用户在弹窗中取消
-            logger.info(f"[NetworkDiscoveryWorkflow] 用户取消了选歌弹窗: {clean_q}")
-            return WorkflowOutput(
-                answer_text=f"已为你取消《{clean_q or clean_art}》的下载。若需要收听其他歌曲，随时吩咐我 🎵",
-                tools=[],
-                success=False
+        best_cand: TrackCandidate = candidates[0]
+
+        if is_auto_mode:
+            logger.info(f"[NetworkDiscoveryWorkflow] 处于【自动优先下载模式】，免弹窗直接选取首选候选: 《{best_cand.title}》- {best_cand.artist} ({best_cand.provider})")
+        else:
+            # 弹窗自选模式：下发前 5 条最接近版本
+            selected_id = await self.runtime.confirmation_manager.request_candidate_selection(
+                session_id=session_id,
+                query=clean_q or clean_art,
+                artist=clean_art,
+                candidates=candidates[:5]
             )
 
-        # 匹配用户选定的候选对象
-        best_cand: TrackCandidate = candidates[0]
-        for c in candidates:
-            if c.id == selected_id:
-                best_cand = c
-                break
+            if selected_id is None:
+                # 用户在弹窗中取消
+                logger.info(f"[NetworkDiscoveryWorkflow] 用户取消了选歌弹窗: {clean_q}")
+                return WorkflowOutput(
+                    answer_text=f"已为你取消《{clean_q or clean_art}》的下载。若需要收听其他歌曲，随时吩咐我 🎵",
+                    tools=[],
+                    success=False
+                )
+
+            # 匹配用户选定的候选对象
+            for c in candidates:
+                if c.id == selected_id:
+                    best_cand = c
+                    break
 
         tool_cards: List[Dict[str, Any]] = []
 
@@ -171,9 +180,10 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
             })
             return WorkflowOutput(
                 answer_text=(
-                    f"在【{provider_label}】平台为你匹配到《{best_cand.title}》- {best_cand.artist} 的高品质资源：\n\n"
-                    f"🔗 **资源链接**：{best_cand.url}\n\n"
-                    f"🌐 已为你通过系统默认浏览器自动唤起转存页面！你可直接保存至网盘下载，或吩咐我点播其他曲目 🎵"
+                    f"在【{provider_label}】平台为你匹配到《{best_cand.title}》- {best_cand.artist} 的资源：\n\n"
+                    f"🔗 **网盘地址**：{best_cand.url}\n\n"
+                    f"💡 **温馨提示**：该链接为第三方网盘转存地址，通常可能需要微信扫码关注公众号获取提取码，或在网盘客户端内打开。\n"
+                    f"若该链接已失效或无法直接转存，建议在界面中选择其他直接可播的音频版本，无需扫码即可直接在播放器内畅听 🎵"
                 ),
                 tools=tool_cards,
                 success=True

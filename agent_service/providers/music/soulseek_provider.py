@@ -6,6 +6,7 @@ SoulseekMusicProvider (slskd P2P 独立外部集成 Provider)
 若未运行或不可达，优雅静默降级，不阻断主流程。
 """
 import os
+import re
 import uuid
 import shutil
 import asyncio
@@ -16,26 +17,10 @@ from .base import BaseMusicProvider, ProviderCapabilities, TrackCandidate
 
 logger = logging.getLogger("AgentLogger")
 
-# 音乐常用简繁汉字转换映射表（覆盖港台及海外无损 P2P 曲库常见字）
-_SIMP_TO_TRAD = {
-    '爱': '愛', '伦': '倫', '没': '沒', '国': '國', '风': '風', '乐': '樂', '华': '華',
-    '杰': '傑', '听': '聽', '欢': '歡', '语': '語', '恋': '戀', '梦': '夢', '离': '離',
-    '开': '開', '关': '關', '点': '點', '会': '會', '边': '邊', '头': '頭', '间': '間',
-    '门': '門', '见': '見', '经': '經', '动': '動', '现': '現', '单': '單', '选': '選',
-    '变': '變', '阳': '陽', '怀': '懷', '伤': '傷', '忆': '憶', '独': '獨', '寻': '尋',
-    '尽': '盡', '泪': '淚', '觉': '覺', '编': '編', '飞': '飛', '归': '歸', '传': '傳',
-    '声': '聲', '尘': '塵', '盏': '盞', '栈': '棧', '难': '難', '岁': '歲', '浅': '淺',
-    '乱': '亂', '绝': '絕', '续': '續', '终': '終', '绿': '綠', '蓝': '藍', '红': '紅',
-    '银': '銀', '钱': '錢', '铁': '鐵', '钟': '鐘', '镜': '鏡', '雾': '霧', '灵': '靈',
-    '鸟': '鳥', '凤': '鳳', '鱼': '魚', '麦': '麥', '叶': '葉', '艺': '藝', '节': '節',
-    '亲': '親', '誉': '譽', '誓': '誓', '转': '轉', '轮': '輪', '轻': '輕', '载': '載',
-    '辉': '輝', '辑': '輯', '帅': '帥', '尔': '爾', '讯': '訊', '陈': '陳', '张': '張',
-    '刘': '劉', '杨': '楊', '黄': '黃', '孙': '孫', '赵': '趙', '吴': '吳', '郑': '鄭',
-    '王': '王', '林': '林', '李': '李', '晴': '晴', '天': '天', '春': '春', '秋': '秋'
-}
-
-def to_traditional(text: str) -> str:
-    return "".join(_SIMP_TO_TRAD.get(ch, ch) for ch in text)
+try:
+    from utils.chinese_converter import to_traditional, to_simplified, get_artist_variations
+except ImportError:
+    from agent_service.utils.chinese_converter import to_traditional, to_simplified, get_artist_variations
 
 
 class SoulseekMusicProvider(BaseMusicProvider):
@@ -128,214 +113,203 @@ class SoulseekMusicProvider(BaseMusicProvider):
         if not clean_q and not clean_art:
             return []
 
-        # 确定主检索关键词：海外及港台无损 P2P 曲库几乎全部使用繁体字，优先使用繁体检索
+        # 确定主检索关键词：海外及港台无损 P2P 曲库以标准繁体字为主 (如 蕭瀟、愛要坦蕩蕩)，优先使用繁体检索
         trad_q = to_traditional(clean_q)
-        primary_term = trad_q if trad_q != clean_q else clean_q
-        fallback_term = clean_q if trad_q != clean_q else ""
+        primary_term = trad_q if trad_q else clean_q
 
         results: List[TrackCandidate] = []
         seen_filenames = set()
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                terms_to_try = [primary_term]
-                for term in terms_to_try:
+                post_resp = await client.post(
+                    f"{self.api_base_url}/searches",
+                    json={"searchText": primary_term},
+                    headers=self._get_headers()
+                )
+                retry_count = 0
+                while post_resp.status_code == 409 and retry_count < 3:
+                    retry_count += 1
+                    await asyncio.sleep(1.5)
                     post_resp = await client.post(
                         f"{self.api_base_url}/searches",
-                        json={"searchText": term},
+                        json={"searchText": primary_term},
                         headers=self._get_headers()
                     )
 
-                    retry_count = 0
-                    while post_resp.status_code == 409 and retry_count < 3:
-                        retry_count += 1
-                        await asyncio.sleep(1.2)
-                        post_resp = await client.post(
-                            f"{self.api_base_url}/searches",
-                            json={"searchText": term},
+                if post_resp.status_code not in [200, 201]:
+                    return []
+
+                s_data = post_resp.json()
+                search_id = s_data.get("id") if isinstance(s_data, dict) else str(s_data).strip('"')
+                if not search_id:
+                    return []
+
+                # 轮询直至完成或超时
+                max_poll_secs = 22.0
+                poll_step = 0.8
+                elapsed_poll = 0.0
+                search_has_results = False
+
+                while elapsed_poll < max_poll_secs:
+                    await asyncio.sleep(poll_step)
+                    elapsed_poll += poll_step
+                    try:
+                        status_resp = await client.get(
+                            f"{self.api_base_url}/searches/{search_id}",
                             headers=self._get_headers()
                         )
-
-                    if post_resp.status_code not in [200, 201]:
-                        continue
-
-                    search_data = post_resp.json()
-                    search_id = search_data.get("id") if isinstance(search_data, dict) else str(search_data).strip('"')
-                    if not search_id:
-                        continue
-
-                    # slskd 的 /responses 端点只在搜索完成 (Completed) 后才返回数据，
-                    # 因此先轮询 /searches/{id} 的 state 与 responseCount，
-                    # 确认搜索完成后再一次性拉取 /responses 完整结果。
-                    responses = []
-                    max_poll_secs = 24.0
-                    poll_step = 0.8
-                    elapsed_poll = 0.0
-                    search_has_results = False
-
-                    while elapsed_poll < max_poll_secs:
-                        await asyncio.sleep(poll_step)
-                        elapsed_poll += poll_step
-                        try:
-                            status_resp = await client.get(
-                                f"{self.api_base_url}/searches/{search_id}",
-                                headers=self._get_headers()
-                            )
-                            if status_resp.status_code != 200:
-                                continue
+                        if status_resp.status_code == 200:
                             s_data = status_resp.json()
                             state = s_data.get("state", "")
                             resp_count = s_data.get("responseCount", 0)
-                            file_count = s_data.get("fileCount", 0)
-
                             if resp_count > 0:
                                 search_has_results = True
-
-                            # 搜索已完成（含 TimedOut / Errored 等均算结束）
                             if "Completed" in state:
                                 break
-                        except Exception:
+                    except Exception:
+                        pass
+
+                all_responses = []
+                try:
+                    resp_list = await client.get(
+                        f"{self.api_base_url}/searches/{search_id}/responses",
+                        headers=self._get_headers()
+                    )
+                    if resp_list.status_code == 200:
+                        data = resp_list.json()
+                        if isinstance(data, list):
+                            all_responses = data
+                        elif isinstance(data, dict) and data.get("responses"):
+                            all_responses = data.get("responses")
+                except Exception as ex:
+                    logger.debug(f"[SoulseekProvider] 获取 responses 异常: {ex}")
+
+                # 汇聚所有匹配的候选文件，并记录 Peer 列表
+                peer_candidates: List[Dict[str, Any]] = []
+                for resp in all_responses:
+                    username = resp.get("username", "Soulseek User")
+                    files = resp.get("files", [])
+                    for f in files:
+                        filename = f.get("filename", "")
+                        ext = os.path.splitext(filename)[1].lower()
+                        if ext not in [".mp3", ".flac", ".m4a", ".wav"]:
                             continue
 
-                    # 搜索完成后一次性拉取 /responses
-                    if search_has_results:
-                        try:
-                            resp_list = await client.get(
-                                f"{self.api_base_url}/searches/{search_id}/responses",
-                                headers=self._get_headers()
-                            )
-                            if resp_list.status_code == 200:
-                                data = resp_list.json()
-                                if isinstance(data, list):
-                                    responses = data
-                                elif isinstance(data, dict) and data.get("responses"):
-                                    responses = data.get("responses")
-                        except Exception:
-                            pass
-
-                    # 汇聚所有匹配的候选文件，并记录 Peer 列表
-                    peer_candidates: List[Dict[str, Any]] = []
-                    for resp in responses:
-                        username = resp.get("username", "Soulseek User")
-                        files = resp.get("files", [])
-                        for f in files:
-                            filename = f.get("filename", "")
-                            ext = os.path.splitext(filename)[1].lower()
-                            if ext not in [".mp3", ".flac", ".m4a", ".wav"]:
-                                continue
-
-                            # 验证文件名是否包含目标关键词 (简繁任一包含均匹配)
-                            fn_lower = filename.lower()
-                            q_simp_l = clean_q.lower()
-                            q_trad_l = to_traditional(clean_q).lower()
-                            if clean_q and (q_simp_l not in fn_lower and q_trad_l not in fn_lower):
-                                continue
-
-                            size = f.get("size", 0)
-                            bitrate = f.get("bitRate", 320)
-                            length_sec = f.get("length", 240)
-                            peer_candidates.append({
-                                "username": username,
-                                "remote_filename": filename,
-                                "size": size,
-                                "bitrate": bitrate or (960 if ext in [".flac", ".wav"] else 320),
-                                "ext": ext,
-                                "format": "flac" if ext == ".flac" else ("wav" if ext == ".wav" else "mp3"),
-                                "length": length_sec
-                            })
-
-                    # 按品质排序：无损 FLAC 优先，码率高优先
-                    peer_candidates.sort(key=lambda p: (p["ext"] in [".flac", ".wav"], p["bitrate"], p["size"]), reverse=True)
-
-                    for p in peer_candidates:
-                        fn = p["remote_filename"]
-                        if fn in seen_filenames:
+                        # 验证文件名或路径是否包含目标关键词 (简繁任一包含均匹配)
+                        fn_lower = filename.lower()
+                        q_simp_l = clean_q.lower()
+                        q_trad_l = trad_q.lower()
+                        if clean_q and (q_simp_l not in fn_lower and q_trad_l not in fn_lower):
                             continue
-                        seen_filenames.add(fn)
 
-                        fn_base = os.path.basename(fn)
-                        fn_lower = fn_base.lower()
+                        size = f.get("size", 0)
+                        bitrate = f.get("bitRate", 320)
+                        length_sec = f.get("length", 240)
+                        peer_candidates.append({
+                            "username": username,
+                            "remote_filename": filename,
+                            "size": size,
+                            "bitrate": bitrate or (960 if ext in [".flac", ".wav"] else 320),
+                            "ext": ext,
+                            "format": "flac" if ext == ".flac" else ("wav" if ext == ".wav" else "mp3"),
+                            "length": length_sec
+                        })
 
-                        # 识别版本特征标签与是否属于翻唱/DJ混音
-                        is_remix = any(k in fn_lower for k in ["remix", "rmx", "electro", "manyao", "慢摇", "串烧", "dj", "club mix", "热血版"])
-                        is_cover = any(k in fn_lower for k in ["cover", "翻唱", "翻自", "原唱：", "原唱:"])
-                        is_inst = any(k in fn_lower for k in ["伴奏", "inst", "instrumental", "karaoke"])
-                        is_live = any(k in fn_lower for k in ["live", "现场版", "演唱会"])
+                # 按品质排序：无损 FLAC 优先，码率高优先
+                peer_candidates.sort(key=lambda p: (p["ext"] in [".flac", ".wav"], p["bitrate"], p["size"]), reverse=True)
 
-                        if is_remix:
-                            version_tag = "DJ混音"
-                        elif is_cover:
-                            version_tag = "翻唱版"
-                        elif is_inst:
-                            version_tag = "伴奏"
-                        elif is_live:
-                            version_tag = "现场版"
-                        elif ext in [".flac", ".wav"]:
-                            version_tag = "原版无损"
-                        else:
-                            version_tag = "原版音频"
+                for p in peer_candidates:
+                    fn = p["remote_filename"]
+                    if fn in seen_filenames:
+                        continue
+                    seen_filenames.add(fn)
 
-                        # 真实歌手与标题提取 (避免翻唱者或串烧制作者被强行标记为目标歌手原唱)
-                        clean_title = clean_q or os.path.splitext(fn_base)[0]
-                        clean_artist_str = clean_art
+                    fn_base = os.path.basename(fn)
+                    fn_lower = fn_base.lower()
+                    fn_full_lower = fn.lower()
 
-                        # 检查目标歌手是否真实出现在路径或文件名中
-                        art_in_file = False
-                        if clean_art:
-                            art_simp = clean_art.lower()
-                            art_trad = to_traditional(clean_art).lower()
-                            if art_simp in fn_lower or art_trad in fn_lower or art_simp in fn.lower():
+                    # 识别版本特征标签与是否属于翻唱/DJ混音
+                    is_remix = any(k in fn_lower for k in ["remix", "rmx", "electro", "manyao", "慢摇", "串烧", "dj", "club mix", "热血版"])
+                    is_cover = any(k in fn_lower for k in ["cover", "翻唱", "翻自", "原唱：", "原唱:"])
+                    is_inst = any(k in fn_lower for k in ["伴奏", "inst", "instrumental", "karaoke"])
+                    is_live = any(k in fn_lower for k in ["live", "现场版", "演唱会"])
+
+                    # 检查目标歌手是否真实出现在路径或文件名中 (含别名与繁体)
+                    art_in_file = False
+                    clean_artist_str = clean_art
+                    if clean_art:
+                        variations = get_artist_variations(clean_art)
+                        for v in variations:
+                            v_l = v.lower()
+                            if v_l in fn_lower or v_l in fn_full_lower:
                                 art_in_file = True
+                                clean_artist_str = clean_art
+                                break
 
-                        if not art_in_file and clean_art:
-                            # 文件名中并非目标歌手 (例如: 刘大壮 - 一吻天荒)
-                            # 尝试解析真实歌手
-                            base_no_ext = os.path.splitext(fn_base)[0]
-                            if " - " in base_no_ext:
-                                parts = base_no_ext.split(" - ", 1)
-                                parsed_artist = re.sub(r'^\d+[\s\-_]*', '', parts[0]).strip()
-                                clean_artist_str = parsed_artist or clean_art
-                            else:
-                                clean_artist_str = f"翻唱/未知歌手"
-
-                        # 评分机制：原版无损最高，翻唱与慢摇降权
-                        if is_remix:
-                            conf = 0.50
-                        elif is_cover or (not art_in_file and clean_art):
-                            conf = 0.60
-                        elif ext in [".flac", ".wav"]:
-                            conf = 0.98
+                    if not art_in_file and clean_art:
+                        # 文件名中并非目标歌手 (例如: 刘大壮 - 一吻天荒)
+                        # 解析真实歌手并归入第二级 (歌名匹配 但作者不匹配)
+                        is_cover = True
+                        base_no_ext = os.path.splitext(fn_base)[0]
+                        if " - " in base_no_ext:
+                            parts = base_no_ext.split(" - ", 1)
+                            parsed_artist = re.sub(r'^\d+[\s\-_]*', '', parts[0]).strip()
+                            clean_artist_str = parsed_artist or "其他歌手"
                         else:
-                            conf = 0.92
+                            clean_artist_str = "翻唱/其他歌手"
 
-                        results.append(TrackCandidate(
-                            id=f"slsk_{uuid.uuid4().hex[:8]}",
-                            title=clean_title,
-                            artist=clean_artist_str,
-                            album="Soulseek P2P 共享曲库",
-                            duration=p["length"],
-                            bitrate=p["bitrate"],
-                            format=p["format"],
-                            size_bytes=p["size"],
-                            url=fn,
-                            provider=self.name,
-                            source_type="p2p",
-                            confidence=min(0.99, conf),
-                            capabilities=self.capabilities.to_list(),
-                            extra={
-                                "username": p["username"],
-                                "remote_filename": fn,
-                                "size": p["size"],
-                                "version_tag": version_tag,
-                                "is_remix": is_remix,
-                                "is_cover": is_cover,
-                                "peers": peer_candidates  # 附带所有 Peer 列表供自动容灾切换
-                            }
-                        ))
-                        if len(results) >= limit:
-                            break
+                    clean_title = clean_q or os.path.splitext(fn_base)[0]
 
-                    if len(results) >= limit:
+                    if is_remix:
+                        version_tag = "DJ混音"
+                    elif is_cover or (not art_in_file and clean_art):
+                        version_tag = "翻唱/改编版"
+                    elif is_inst:
+                        version_tag = "伴奏"
+                    elif is_live:
+                        version_tag = "现场版"
+                    elif p["ext"] in [".flac", ".wav"]:
+                        version_tag = "原版无损"
+                    else:
+                        version_tag = "原版音频"
+
+                    # 评分机制：原版无损最高
+                    if is_remix:
+                        conf = 0.70
+                    elif is_cover or (not art_in_file and clean_art):
+                        conf = 0.85
+                    elif p["ext"] in [".flac", ".wav"]:
+                        conf = 0.99
+                    else:
+                        conf = 0.94
+
+                    results.append(TrackCandidate(
+                        id=f"slsk_{uuid.uuid4().hex[:8]}",
+                        title=clean_title,
+                        artist=clean_artist_str,
+                        album="Soulseek P2P 共享曲库",
+                        duration=p["length"],
+                        bitrate=p["bitrate"],
+                        format=p["format"],
+                        size_bytes=p["size"],
+                        url=fn,
+                        provider=self.name,
+                        source_type="p2p",
+                        confidence=min(0.99, conf),
+                        capabilities=self.capabilities.to_list(),
+                        extra={
+                            "username": p["username"],
+                            "remote_filename": fn,
+                            "size": p["size"],
+                            "version_tag": version_tag,
+                            "is_remix": is_remix,
+                            "is_cover": is_cover,
+                            "artist_matches": art_in_file if clean_art else True,
+                            "peers": peer_candidates
+                        }
+                    ))
+                    if len(results) >= limit * 2:
                         break
 
         except Exception as e:
@@ -353,19 +327,27 @@ class SoulseekMusicProvider(BaseMusicProvider):
         # 保持远程 Peer 返回的原生文件路径，严禁人为前置反斜杠避免触发 File not shared
         norm_filename = remote_filename
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                url = f"{self.api_base_url}/transfers/downloads/{username}"
-                payload = [{"filename": norm_filename, "size": size}]
-                resp = await client.post(url, json=payload, headers=self._get_headers())
-                if resp.status_code in [200, 201, 202]:
-                    data = resp.json()
-                    enqueued = data.get("enqueued", [])
-                    if enqueued:
-                        return enqueued[0].get("id")
-                    return "ok"
-        except Exception as e:
-            logger.warning(f"[SoulseekProvider] 提交下载任务报错: {e}")
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    url = f"{self.api_base_url}/transfers/downloads/{username}"
+                    payload = [{"filename": norm_filename, "size": size}]
+                    resp = await client.post(url, json=payload, headers=self._get_headers())
+                    if resp.status_code in [200, 201, 202]:
+                        data = resp.json()
+                        enqueued = data.get("enqueued", [])
+                        if enqueued:
+                            return enqueued[0].get("id")
+                        return "ok"
+                    elif resp.status_code in [500, 502, 503, 504] and attempt == 0:
+                        logger.info(f"[SoulseekProvider] Peer [{username}] 下载端点返回 {resp.status_code}，正在等待连接并重试...")
+                        await asyncio.sleep(1.5)
+                        continue
+            except Exception as e:
+                logger.warning(f"[SoulseekProvider] 提交下载任务报错: {e}")
+                if attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
         return None
 
     async def download_track(

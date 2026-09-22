@@ -58,7 +58,7 @@ class DownloadService:
         target_path = os.path.join(self.download_dir, filename)
         target_lrc_path = os.path.join(self.download_dir, lrc_filename)
 
-        # 若已下载过合法文件 (文件大小大于 500KB 且音频头有效)，直接返回已有文件
+        # 若已下载过合法文件 (文件大小大于 300KB 且音频头有效)，直接返回已有文件
         if os.path.exists(target_path) and os.path.getsize(target_path) > 300000:
             with open(target_path, "rb") as f_check:
                 head = f_check.read(16)
@@ -66,6 +66,31 @@ class DownloadService:
                     logger.info(f"[DownloadService] 本地已存在合法曲目，无需重复下载: {target_path}")
                     self._sync_to_local_music_dir(target_path, target_lrc_path)
                     return target_path
+
+        # 检查主曲库及子目录是否已有已完成下载的匹配音频文件 (例如 P2P 存入子目录的情况)
+        if os.path.exists(self.download_dir):
+            trad_t = ""
+            try:
+                from utils.chinese_converter import to_traditional
+                trad_t = to_traditional(candidate.title)
+            except Exception:
+                pass
+            for root, dirs, files in os.walk(self.download_dir):
+                if "incomplete" in root.lower():
+                    continue
+                for fn in files:
+                    ext = os.path.splitext(fn)[1].lower()
+                    if ext in [".mp3", ".flac", ".m4a", ".wav"]:
+                        fn_l = fn.lower()
+                        if candidate.title.lower() in fn_l or (trad_t and trad_t.lower() in fn_l):
+                            found_f = os.path.join(root, fn)
+                            if os.path.getsize(found_f) > 300000:
+                                if os.path.abspath(found_f) != os.path.abspath(target_path):
+                                    shutil.copy2(found_f, target_path)
+                                logger.info(f"[DownloadService] 在本地曲库子目录中定位到已下载曲目: {found_f} -> {target_path}")
+                                await self._fetch_or_create_lrc(candidate, target_lrc_path)
+                                self._sync_to_local_music_dir(target_path, target_lrc_path)
+                                return target_path
 
         # 尝试的候选列表 (首选 + 备选)
         cands_to_try: List[TrackCandidate] = [candidate]

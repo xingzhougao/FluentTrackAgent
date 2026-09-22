@@ -112,6 +112,48 @@ Item {
 
             Item { Layout.fillWidth: true }
 
+            // 点播与下载模式切换按钮 (自动优先 vs 弹窗自选)
+            Button {
+                id: modeToggleBtn
+                implicitHeight: 34
+                implicitWidth: 122
+                background: Rectangle {
+                    radius: 8
+                    color: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode)
+                           ? (modeToggleBtn.hovered ? "#163a2b" : "#0f291e")
+                           : (modeToggleBtn.hovered ? "#1c293a" : "#131e2b")
+                    border.color: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode)
+                                  ? "#22c55e"
+                                  : "#2b3d54"
+                    border.width: 1
+                }
+                contentItem: RowLayout {
+                    anchors.centerIn: parent
+                    spacing: 6
+                    Text {
+                        text: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode) ? "⚡" : "📋"
+                        color: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode) ? "#4ade80" : "#93c5fd"
+                        font.pixelSize: 13
+                    }
+                    Text {
+                        text: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode) ? "自动优先下载" : "弹窗自选版本"
+                        color: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode) ? "#86efac" : "#cbd5e1"
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                    }
+                }
+                ToolTip.visible: modeToggleBtn.hovered
+                ToolTip.delay: 400
+                ToolTip.text: (typeof agentController !== "undefined" && agentController && agentController.autoDownloadMode)
+                              ? "当前模式【自动优先下载】：检索到首选最佳音源后自动下载入库并播放，无需弹窗确认"
+                              : "当前模式【弹窗自选版本】：检索后弹出版本卡片，由您手动点选心仪音质与版本"
+                onClicked: {
+                    if (typeof agentController !== "undefined" && agentController) {
+                        agentController.setAutoDownloadMode(!agentController.autoDownloadMode);
+                    }
+                }
+            }
+
             // 新建会话按钮
             Button {
                 id: newChatBtn

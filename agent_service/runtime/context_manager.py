@@ -40,6 +40,8 @@ class SessionContext:
         self.last_recommended_tracks: List[Dict[str, Any]] = []
         self.last_played_track: Optional[Dict[str, Any]] = None
         self.last_action: Optional[str] = None
+        # 会话偏好设置 (如 auto_download 等)
+        self.preferences: Dict[str, Any] = {"auto_download": False}
 
     def add_user_message(self, content: str):
         self.last_user_query = content
