@@ -345,7 +345,7 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
             })
 
             return WorkflowOutput(
-                answer_text=f"未能从网络获取《{best_cand.title}》的有效音频流。{netdisk_hint}\n\n建议吩咐我换一首歌曲试试看 ✨",
+                answer_text=f"抱歉暂时未能获取到《{best_cand.title}》的有效直接音频流，建议吩咐我换一首歌曲试试看 ✨",
                 tools=tool_cards,
                 success=False
             )

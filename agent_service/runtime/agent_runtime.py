@@ -162,6 +162,13 @@ class AgentRuntime:
             self.confirmation_manager.handle_candidate_selection_response(confirm_id, selected_id, cancelled)
             return
 
+        if msg_type == "update_preference":
+            session_ctx = self.context_manager.get_session(session_id)
+            for k, v in payload.items():
+                session_ctx.preferences[k] = v
+            logger.info(f"[AgentRuntime] 成功更新会话偏好: session={session_id}, preferences={session_ctx.preferences}")
+            return
+
         if msg_type == "user_message":
             user_text = payload.get("text", "").strip()
             if not user_text:

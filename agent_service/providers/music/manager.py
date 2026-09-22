@@ -157,11 +157,28 @@ class MusicProviderManager:
 
         final_list = list(deduped.values())
 
-        # 智能综合排序：四级梯队最高 > 码率最高
+        # 智能综合排序：梯队最高 > 码率最高
         final_list.sort(
             key=lambda c: getattr(c, "_sort_key", (c.confidence, c.bitrate)),
             reverse=True
         )
+
+        # 核心规则落实：P2P 搜索完也用下歌吧搜索一下，两方均为用户提供选项 (P2P优先，下歌吧紧随其后)
+        slsk_cands = [c for c in final_list if c.provider == "soulseek_p2p"]
+        xgb_cands = [c for c in final_list if c.provider == "xiageba"]
+
+        if slsk_cands and xgb_cands:
+            combined = []
+            # Soulseek P2P 占前列 (最多 3 条)
+            combined.extend(slsk_cands[:3])
+            # 下歌吧紧随其后 (占 2 条，填满 5 条)
+            combined.extend(xgb_cands[:max(1, limit - len(combined))])
+            if len(combined) < limit:
+                for c in final_list:
+                    if c not in combined and len(combined) < limit:
+                        combined.append(c)
+            return combined[:limit]
+
         return final_list[:limit]
 
     async def _safe_search(

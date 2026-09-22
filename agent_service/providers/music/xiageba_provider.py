@@ -75,7 +75,7 @@ class XiagebaProvider(BaseMusicProvider):
                 resp = None
                 for attempt in range(2):
                     try:
-                        resp = await client.get(search_url, params=params, headers=self.headers, timeout=4.0)
+                        resp = await client.get(search_url, params=params, headers=self.headers, timeout=self.timeout)
                         if resp.status_code == 200:
                             break
                     except Exception as conn_err:
@@ -116,7 +116,7 @@ class XiagebaProvider(BaseMusicProvider):
                 # 2. 并发异步获取各候选详情
                 async def fetch_item_detail(iid: str) -> Dict[str, Any]:
                     try:
-                        det_resp = await client.get(f"{self.base_url}/api/music/{iid}", headers=self.headers, timeout=3.5)
+                        det_resp = await client.get(f"{self.base_url}/api/music/{iid}", headers=self.headers, timeout=6.0)
                         if det_resp.status_code == 200:
                             return det_resp.json()
                     except Exception as ex:
