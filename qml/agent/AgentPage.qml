@@ -15,6 +15,7 @@ Item {
     property bool isConnected: typeof agentController !== "undefined" ? agentController.isConnected : false
     property string agentStatus: typeof agentController !== "undefined" ? agentController.agentStatus : "offline"
     property string statusText: typeof agentController !== "undefined" ? agentController.statusText : "服务未连接"
+    property string pendingConfirmId: ""
 
     // 1. 背景层 暗色 WinUI 风格渐变
     Rectangle {
@@ -69,8 +70,8 @@ Item {
                         Layout.preferredHeight: 22
                         implicitWidth: statusRow.implicitWidth + 16
                         radius: 11
-                        color: root.agentStatus === "ready" ? "#102a1e" : (root.agentStatus === "thinking" ? "#1c2b44" : "#2d1616")
-                        border.color: root.agentStatus === "ready" ? "#22c55e" : (root.agentStatus === "thinking" ? "#3b82f6" : "#ef4444")
+                        color: root.agentStatus === "ready" ? "#102a1e" : (root.agentStatus === "downloading" ? "#14293d" : (root.agentStatus === "thinking" ? "#1c2b44" : "#2d1616"))
+                        border.color: root.agentStatus === "ready" ? "#22c55e" : (root.agentStatus === "downloading" ? "#38bdf8" : (root.agentStatus === "thinking" ? "#3b82f6" : "#ef4444"))
                         border.width: 1
 
                         RowLayout {
@@ -82,10 +83,10 @@ Item {
                                 Layout.preferredWidth: 6
                                 Layout.preferredHeight: 6
                                 radius: 3
-                                color: root.agentStatus === "ready" ? "#22c55e" : (root.agentStatus === "thinking" ? "#60a5fa" : "#ef4444")
+                                color: root.agentStatus === "ready" ? "#22c55e" : (root.agentStatus === "downloading" ? "#38bdf8" : (root.agentStatus === "thinking" ? "#60a5fa" : "#ef4444"))
 
                                 SequentialAnimation on opacity {
-                                    running: root.agentStatus === "thinking"
+                                    running: root.agentStatus === "thinking" || root.agentStatus === "downloading"
                                     loops: Animation.Infinite
                                     NumberAnimation { from: 0.3; to: 1.0; duration: 500 }
                                     NumberAnimation { from: 1.0; to: 0.3; duration: 500 }
@@ -94,7 +95,7 @@ Item {
 
                             Text {
                                 text: root.statusText
-                                color: root.agentStatus === "ready" ? "#86efac" : (root.agentStatus === "thinking" ? "#93c5fd" : "#fca5a5")
+                                color: root.agentStatus === "ready" ? "#86efac" : (root.agentStatus === "downloading" ? "#7dd3fc" : (root.agentStatus === "thinking" ? "#93c5fd" : "#fca5a5"))
                                 font.pixelSize: 11
                                 font.weight: Font.Medium
                             }
@@ -312,14 +313,25 @@ Item {
         }
     }
 
-    // 5. 模态弹窗层
+    // 5. 模态弹窗层 与 人工确认交互 (Step 5 Human Confirmation)
+    Connections {
+        target: typeof agentController !== "undefined" ? agentController : null
+        function onConfirmationRequired(confirmId, title, message, details) {
+            console.log("[AgentPage] 收到人工确认请求: confirmId=" + confirmId + ", title=" + title);
+            root.pendingConfirmId = confirmId;
+            confirmDialog.open(confirmId, title, message, details);
+        }
+    }
+
     AgentConfirmDialog {
         id: confirmDialog
-        onConfirmed: {
-            console.log("用户已确认敏感操作");
+        onConfirmed: function(cid) {
+            console.log("[AgentPage] 用户已确认敏感操作: " + cid);
+            root.pendingConfirmId = "";
         }
-        onRejected: {
-            console.log("用户取消了敏感操作");
+        onRejected: function(cid) {
+            console.log("[AgentPage] 用户取消了敏感操作: " + cid);
+            root.pendingConfirmId = "";
         }
     }
 

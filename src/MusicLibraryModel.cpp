@@ -165,6 +165,142 @@ void MusicLibraryModel::scanDirectory(const QString & directory)
     emit countChanged();
 }
 
+void MusicLibraryModel::appendDirectory(const QString & directory)
+{
+    if (directory.isEmpty())
+        return;
+    QDir dir(directory);
+    if (!dir.exists())
+        return;
+
+    QStringList filters {
+        "*.mp3",
+        "*.wav",
+        "*.flac",
+        "*.m4a",
+        "*.aac",
+        "*.ogg"
+    };
+
+    QDirIterator iterator(directory, filters, QDir::Files, QDirIterator::Subdirectories);
+    QVector<MusicTrack> newTracks;
+
+    while (iterator.hasNext())
+    {
+        QString filePath = iterator.next();
+        QFileInfo info(filePath);
+        QString absPath = info.absoluteFilePath();
+
+        QString baseName = info.completeBaseName();
+        QString candidateTitle, candidateArtist, candidateAlbum;
+        QStringList parts = baseName.split(" - ");
+        if (parts.size() >= 3)
+        {
+            candidateTitle = parts[1].trimmed();
+            candidateArtist = parts[2].trimmed();
+            candidateAlbum = candidateTitle + " (单曲)";
+        }
+        else if (parts.size() == 2)
+        {
+            candidateTitle = parts[0].trimmed();
+            candidateArtist = parts[1].trimmed();
+            candidateAlbum = candidateTitle + " (单曲)";
+        }
+        else
+        {
+            candidateTitle = baseName;
+            candidateArtist = "未知歌手";
+            candidateAlbum = "热门单曲";
+        }
+
+        bool exists = false;
+        for (const MusicTrack & existing : m_tracks)
+        {
+            if (existing.filePath == absPath ||
+                (existing.title.compare(candidateTitle, Qt::CaseInsensitive) == 0 &&
+                 existing.artist.compare(candidateArtist, Qt::CaseInsensitive) == 0))
+            {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists)
+        {
+            for (const MusicTrack & added : newTracks)
+            {
+                if (added.filePath == absPath ||
+                    (added.title.compare(candidateTitle, Qt::CaseInsensitive) == 0 &&
+                     added.artist.compare(candidateArtist, Qt::CaseInsensitive) == 0))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (exists)
+            continue;
+
+        MusicTrack track;
+        track.filePath = absPath;
+        track.title = candidateTitle;
+        track.artist = candidateArtist;
+        track.album = candidateAlbum;
+
+        // 读取同名.lrc文件解析最后一行的时间戳得到毫秒总时长
+        QString lrcPath = info.absolutePath() + "/" + baseName + ".lrc";
+        QFile lrcFile(lrcPath);
+        if (lrcFile.exists() && lrcFile.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            QTextStream stream(&lrcFile);
+            static const QRegularExpression regex(R"(\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\])");
+            qint64 lastTimestamp = 0;
+            while (!stream.atEnd())
+            {
+                QString line = stream.readLine();
+                QRegularExpressionMatchIterator it = regex.globalMatch(line);
+                while (it.hasNext())
+                {
+                    QRegularExpressionMatch match = it.next();
+                    int mm = match.captured(1).toInt();
+                    int ss = match.captured(2).toInt();
+                    QString frac = match.captured(3);
+                    int ms = 0;
+                    if (frac.length() == 1)
+                        ms = frac.toInt() * 100;
+                    else if (frac.length() == 2)
+                        ms = frac.toInt() * 10;
+                    else if (frac.length() >= 3)
+                        ms = frac.left(3).toInt();
+
+                    qint64 t = (mm * 60 + ss) * 1000 + ms;
+                    if (t > lastTimestamp)
+                        lastTimestamp = t;
+                }
+            }
+            if (lastTimestamp > 0)
+                track.duration = lastTimestamp + 5000;
+            lrcFile.close();
+        }
+
+        if (track.duration <= 0 && info.size() > 0)
+            track.duration = (info.size() / 16000) * 1000;
+
+        if (m_favoriteManager)
+            track.favorite = m_favoriteManager->isFavorite(track.filePath);
+
+        track.coverUrl = CoverManager::instance().getCoverUrl(track.filePath);
+        newTracks.append(track);
+    }
+
+    if (!newTracks.isEmpty())
+    {
+        beginInsertRows(QModelIndex(), m_tracks.size(), m_tracks.size() + newTracks.size() - 1);
+        m_tracks.append(newTracks);
+        endInsertRows();
+        emit countChanged();
+    }
+}
+
 
 //更新MP3元数据信息
 void MusicLibraryModel::updateMetadata(int index,const QString &title,const QString &artist,const QString &album,qint64 duration)

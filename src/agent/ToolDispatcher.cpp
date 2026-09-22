@@ -3,6 +3,7 @@
 #include "../FavoriteManager.h"
 #include "../MusicLibraryModel.h"
 #include "../PlaylistManager.h"
+#include "../CoverManager.h"
 #include <QJsonArray>
 #include <QFile>
 #include <QFileInfo>
@@ -103,6 +104,10 @@ QJsonObject ToolDispatcher::executeTool(const QString &toolName, const QJsonObje
             response["error"] = "";
         } else if (toolName == "get_local_library_overview") {
             response["result"] = handleGetLocalLibraryOverview();
+            response["success"] = true;
+            response["error"] = "";
+        } else if (toolName == "import_downloaded_track") {
+            response["result"] = handleImportDownloadedTrack(arguments);
             response["success"] = true;
             response["error"] = "";
         } else {
@@ -508,5 +513,100 @@ QJsonObject ToolDispatcher::handleGetLocalLibraryOverview()
     QJsonObject res;
     res["total_tracks"] = total;
     res["sample_tracks"] = sampleArr;
+    return res;
+}
+
+QJsonObject ToolDispatcher::handleImportDownloadedTrack(const QJsonObject &args)
+{
+    if (!m_library) {
+        throw std::runtime_error("本地音乐库未就绪");
+    }
+
+    QString filePath = args.value("file_path").toString().trimmed();
+    if (filePath.isEmpty()) {
+        throw std::runtime_error("file_path 不能为空");
+    }
+
+    QFileInfo fileInfo(filePath);
+    if (!fileInfo.exists()) {
+        throw std::runtime_error(QString("文件不存在: %1").arg(filePath).toStdString());
+    }
+
+    QString title = args.value("title").toString().trimmed();
+    QString artist = args.value("artist").toString().trimmed();
+    QString album = args.value("album").toString().trimmed();
+    qint64 duration = args.value("duration").toInteger(0) * 1000;
+    bool autoPlay = args.value("auto_play").toBool(true);
+
+    if (title.isEmpty()) {
+        title = fileInfo.completeBaseName();
+    }
+    if (artist.isEmpty()) {
+        artist = "网络歌手";
+    }
+    if (album.isEmpty()) {
+        album = QString("《%1》单曲").arg(title);
+    }
+
+    int existingIndex = m_library->indexOfFilePath(filePath);
+    int targetIndex = -1;
+
+    if (existingIndex >= 0) {
+        targetIndex = existingIndex;
+        qInfo() << "[ToolDispatcher] 曲目已在本地库中:" << filePath << "索引:" << targetIndex;
+    } else {
+        MusicTrack track;
+        track.filePath = fileInfo.absoluteFilePath();
+        track.title = title;
+        track.artist = artist;
+        track.album = album;
+        if (duration <= 0) {
+            QString lrcPath = fileInfo.absolutePath() + "/" + fileInfo.completeBaseName() + ".lrc";
+            QFile lrcFile(lrcPath);
+            if (lrcFile.exists() && lrcFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream stream(&lrcFile);
+                static const QRegularExpression regex(R"(\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\])");
+                qint64 lastTimestamp = 0;
+                while (!stream.atEnd()) {
+                    QString line = stream.readLine();
+                    QRegularExpressionMatchIterator it = regex.globalMatch(line);
+                    while (it.hasNext()) {
+                        QRegularExpressionMatch match = it.next();
+                        int mm = match.captured(1).toInt();
+                        int ss = match.captured(2).toInt();
+                        QString frac = match.captured(3);
+                        int ms = 0;
+                        if (frac.length() == 1) ms = frac.toInt() * 100;
+                        else if (frac.length() == 2) ms = frac.toInt() * 10;
+                        else if (frac.length() >= 3) ms = frac.left(3).toInt();
+                        qint64 t = (mm * 60 + ss) * 1000 + ms;
+                        if (t > lastTimestamp) lastTimestamp = t;
+                    }
+                }
+                if (lastTimestamp > 0) duration = lastTimestamp + 5000;
+                lrcFile.close();
+            }
+        }
+
+        track.duration = duration > 0 ? duration : (fileInfo.size() / 16000) * 1000;
+        track.coverUrl = CoverManager::instance().getCoverUrl(track.filePath);
+
+        m_library->appendTrack(track);
+        targetIndex = m_library->count() - 1;
+        qInfo() << "[ToolDispatcher] 成功导入新曲目到本地库:" << track.title << "-" << track.artist << "时长:" << track.duration << "新索引:" << targetIndex;
+    }
+
+    if (autoPlay && m_player && targetIndex >= 0) {
+        m_player->playFromModel(m_library, targetIndex);
+        qInfo() << "[ToolDispatcher] 导入曲目后自动启动播放，索引:" << targetIndex;
+    }
+
+    QJsonObject res;
+    res["file_path"] = filePath;
+    res["index"] = targetIndex;
+    res["title"] = title;
+    res["artist"] = artist;
+    res["total_count"] = m_library->count();
+    res["auto_played"] = autoPlay;
     return res;
 }

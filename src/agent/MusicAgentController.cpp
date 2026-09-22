@@ -237,12 +237,43 @@ void MusicAgentController::onTransportMessageReceived(const QJsonObject &message
         return;
     }
 
+    if (type == "confirmation_required") {
+        QString confirmId = message.value("confirm_id").toString();
+        QString title = payload.value("title").toString("操作确认");
+        QString msg = payload.value("message").toString();
+        QString details = payload.value("details").toString();
+
+        qInfo() << "[MusicAgentController] 收到人工确认请求:" << confirmId << title << msg;
+        emit confirmationRequired(confirmId, title, msg, details);
+        return;
+    }
+
     if (type == "error") {
         QString errorMsg = payload.value("message").toString();
         m_messageModel->appendSystemMessage(QString("【错误】%1").arg(errorMsg));
         emit errorOccurred(errorMsg);
         return;
     }
+}
+
+void MusicAgentController::respondConfirmation(const QString &confirmId, bool confirmed)
+{
+    if (!m_transport || !m_transport->isConnected()) {
+        qWarning() << "[MusicAgentController] Transport 未连接，无法发送 confirmation_response";
+        return;
+    }
+
+    QJsonObject reply;
+    reply["type"] = "confirmation_response";
+    reply["confirm_id"] = confirmId;
+
+    QJsonObject payload;
+    payload["confirm_id"] = confirmId;
+    payload["confirmed"] = confirmed;
+    reply["payload"] = payload;
+
+    qInfo() << "[MusicAgentController] 回传人工确认响应:" << confirmId << "confirmed:" << confirmed;
+    m_transport->sendJson(reply);
 }
 
 void MusicAgentController::onTransportError(const QString &error)

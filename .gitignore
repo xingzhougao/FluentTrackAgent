@@ -8,3 +8,4 @@ qml/music_resource/loadmusic_by_default/*
 agent_service/.idea
 agent_service/__pycache__
 __pycache__/
+tools/

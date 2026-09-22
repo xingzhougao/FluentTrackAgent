@@ -26,6 +26,21 @@ class LlmConfig(BaseModel):
     timeout_seconds: float = 120.0
 
 
+class SoulseekConfig(BaseModel):
+    """Soulseek / slskd P2P 配置"""
+    enabled: bool = True
+    api_base_url: str = "http://127.0.0.1:5030/api/v0"
+    api_key: str = ""
+    timeout_seconds: float = 4.0
+
+
+class XiagebaConfig(BaseModel):
+    """下歌吧 (刘明野) 配置"""
+    enabled: bool = True
+    base_url: str = "https://xiageba.liumingye.cn"
+    timeout_seconds: float = 6.0
+
+
 class ServiceConfig(BaseModel):
     """Agent 微服务运行时配置"""
     host: str = "127.0.0.1"
@@ -35,6 +50,8 @@ class ServiceConfig(BaseModel):
 
     max_history_turns: int = 10
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    soulseek: SoulseekConfig = Field(default_factory=SoulseekConfig)
+    xiageba: XiagebaConfig = Field(default_factory=XiagebaConfig)
 
     log_level: str = "INFO"
     log_file: str = "agent.log"

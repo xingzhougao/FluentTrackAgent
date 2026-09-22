@@ -3,30 +3,32 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
-    id: root
+    id: confirmDialogItem
 
-    property string title: "操作确认"
+    property string confirmId: ""
+    property string dialogTitle: "操作确认"
     property string message: "即将执行敏感操作，是否继续？"
     property string details: ""
     property string confirmText: "确认执行"
     property string cancelText: "取消"
 
-    signal confirmed()
-    signal rejected()
+    signal confirmed(string cid)
+    signal rejected(string cid)
 
     visible: false
     anchors.fill: parent
     z: 1000
 
-    function open(titleText, msgText, detailText) {
-        if (titleText) root.title = titleText;
-        if (msgText) root.message = msgText;
-        root.details = detailText || "";
-        root.visible = true;
+    function open(cid, titleText, msgText, detailText) {
+        confirmDialogItem.confirmId = cid || "";
+        if (titleText) confirmDialogItem.dialogTitle = titleText;
+        if (msgText) confirmDialogItem.message = msgText;
+        confirmDialogItem.details = detailText || "";
+        confirmDialogItem.visible = true;
     }
 
     function close() {
-        root.visible = false;
+        confirmDialogItem.visible = false;
     }
 
     // 遮罩背景
@@ -46,7 +48,7 @@ Item {
         id: dialogCard
         anchors.centerIn: parent
         width: Math.min(parent.width - 64, 460)
-        implicitHeight: dialogLayout.implicitHeight + 36
+        height: dialogLayout.implicitHeight + 40
         radius: 12
         color: "#131c28"
         border.color: "#2a3d54"
@@ -54,7 +56,9 @@ Item {
 
         ColumnLayout {
             id: dialogLayout
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
             anchors.margins: 20
             spacing: 14
 
@@ -81,7 +85,7 @@ Item {
                 }
 
                 Text {
-                    text: root.title
+                    text: confirmDialogItem.dialogTitle
                     color: "#f8fafc"
                     font.pixelSize: 16
                     font.weight: Font.Bold
@@ -90,11 +94,12 @@ Item {
                 Item { Layout.fillWidth: true }
 
                 Button {
+                    id: closeBtn
                     flat: true
                     implicitWidth: 28
                     implicitHeight: 28
                     background: Rectangle {
-                        color: parent.hovered ? "#223145" : "transparent"
+                        color: closeBtn.hovered ? "#223145" : "transparent"
                         radius: 14
                     }
                     contentItem: Text {
@@ -105,8 +110,13 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {
-                        root.close();
-                        root.rejected();
+                        var cid = confirmDialogItem.confirmId;
+                        confirmDialogItem.close();
+                        if (typeof agentController !== "undefined" && agentController && cid !== "") {
+                            agentController.respondConfirmation(cid, false);
+                        }
+                        confirmDialogItem.rejected(cid);
+                        confirmDialogItem.confirmId = "";
                     }
                 }
             }
@@ -121,7 +131,7 @@ Item {
             // 正文提示
             Text {
                 Layout.fillWidth: true
-                text: root.message
+                text: confirmDialogItem.message
                 color: "#cbd5e1"
                 font.pixelSize: 14
                 lineHeight: 1.4
@@ -131,7 +141,7 @@ Item {
             // 详情区域 (可选)
             Rectangle {
                 Layout.fillWidth: true
-                visible: root.details.length > 0
+                visible: confirmDialogItem.details.length > 0
                 implicitHeight: detailsText.implicitHeight + 16
                 radius: 6
                 color: "#0c131c"
@@ -142,7 +152,7 @@ Item {
                     id: detailsText
                     anchors.fill: parent
                     anchors.margins: 10
-                    text: root.details
+                    text: confirmDialogItem.details
                     color: "#94a3b8"
                     font.pixelSize: 11
                     font.family: "Consolas, monospace"
@@ -161,7 +171,7 @@ Item {
 
                 Button {
                     id: cancelBtn
-                    text: root.cancelText
+                    text: confirmDialogItem.cancelText
                     implicitWidth: 88
                     implicitHeight: 34
                     background: Rectangle {
@@ -178,14 +188,19 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {
-                        root.close();
-                        root.rejected();
+                        var cid = confirmDialogItem.confirmId;
+                        confirmDialogItem.close();
+                        if (typeof agentController !== "undefined" && agentController && cid !== "") {
+                            agentController.respondConfirmation(cid, false);
+                        }
+                        confirmDialogItem.rejected(cid);
+                        confirmDialogItem.confirmId = "";
                     }
                 }
 
                 Button {
                     id: okBtn
-                    text: root.confirmText
+                    text: confirmDialogItem.confirmText
                     implicitWidth: 98
                     implicitHeight: 34
                     background: Rectangle {
@@ -201,8 +216,13 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {
-                        root.close();
-                        root.confirmed();
+                        var cid = confirmDialogItem.confirmId;
+                        confirmDialogItem.close();
+                        if (typeof agentController !== "undefined" && agentController && cid !== "") {
+                            agentController.respondConfirmation(cid, true);
+                        }
+                        confirmDialogItem.confirmed(cid);
+                        confirmDialogItem.confirmId = "";
                     }
                 }
             }

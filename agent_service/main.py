@@ -12,15 +12,34 @@ if "PYTHONPATH" in os.environ:
 import argparse
 import asyncio
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import global_config
 from runtime.agent_runtime import AgentRuntime
 from runtime.agent_logger import global_logger
+from services.slskd_daemon import slskd_daemon
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动阶段：若启用了 soulseek，静默自启伴生 slskd 守护进程
+    if global_config.soulseek.enabled:
+        try:
+            asyncio.create_task(slskd_daemon.start())
+        except Exception as e:
+            global_logger.warning(f"[Main] 启动伴生 slskd 守护进程异常: {e}")
+    yield
+    # 退出阶段：优雅终止伴生进程
+    try:
+        slskd_daemon.stop()
+    except Exception as e:
+        global_logger.debug(f"[Main] 关闭伴生 slskd 异常: {e}")
+
 
 # 初始化 FastAPI 实例
-app = FastAPI(title="Fluent Music AI Agent Service", version="2.0.0")
+app = FastAPI(title="Fluent Music AI Agent Service", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

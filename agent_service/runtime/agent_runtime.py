@@ -14,9 +14,13 @@ from .agent_logger import global_logger, AgentEvent
 from .context_manager import ContextManager
 from .session_manager import SessionManager
 from .intent_router import IntentRouter
+from .confirmation_manager import ConfirmationManager
+from providers.music.manager import MusicProviderManager
+from services.download_service import DownloadService
 from workflows.player_command_workflow import PlayerCommandWorkflow
 from workflows.search_and_play_workflow import SearchAndPlayWorkflow
 from workflows.smart_playlist_workflow import SmartPlaylistWorkflow
+from workflows.network_discovery_workflow import NetworkDiscoveryWorkflow
 
 logger = logging.getLogger("AgentLogger")
 
@@ -35,12 +39,18 @@ class AgentRuntime:
         )
         self.llm_manager = LlmManager(self.config.llm)
 
+        # Step 5 核心多源与安全管理实例
+        self.confirmation_manager = ConfirmationManager(self.session_manager)
+        self.provider_manager = MusicProviderManager()
+        self.download_service = DownloadService(provider_manager=self.provider_manager)
+
         # 全双工客户端原子工具调用等待映射表 (request_id -> asyncio.Future)
         self._pending_tool_requests: Dict[str, asyncio.Future] = {}
         # 确定性工作流实例
         self.player_workflow = PlayerCommandWorkflow(self)
         self.search_play_workflow = SearchAndPlayWorkflow(self)
         self.smart_playlist_workflow = SmartPlaylistWorkflow(self)
+        self.network_discovery_workflow = NetworkDiscoveryWorkflow(self)
 
     async def call_client_tool(
         self,
@@ -137,6 +147,13 @@ class AgentRuntime:
                     fut.set_result(payload)
             return
 
+        if msg_type == "confirmation_response":
+            confirm_id = message_data.get("confirm_id") or payload.get("confirm_id", "")
+            confirmed = payload.get("confirmed", False)
+            logger.info(f"[AgentRuntime] 收到客户端 confirmation_response: confirm_id={confirm_id}, confirmed={confirmed}")
+            self.confirmation_manager.handle_response(confirm_id, confirmed)
+            return
+
         if msg_type == "user_message":
             user_text = payload.get("text", "").strip()
             if not user_text:
@@ -166,7 +183,7 @@ class AgentRuntime:
             intent = await IntentRouter.route_intent(user_text, provider, context_session=session_ctx)
 
             # Step 2: 确定性工作流闭环分发
-            if intent.intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST"]:
+            if intent.intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST", "NETWORK_DISCOVERY"]:
                 wf_output = None
                 if intent.intent_type == "PLAYER_CONTROL":
                     await self.session_manager.send_json(session_id, {
@@ -219,6 +236,24 @@ class AgentRuntime:
                         count=count_v,
                         raw_text=user_text,
                         **sp_params
+                    )
+                elif intent.intent_type == "NETWORK_DISCOVERY":
+                    await self.session_manager.send_json(session_id, {
+                        "type": "status_update",
+                        "request_id": request_id,
+                        "payload": {"status": "thinking", "message": "正在全网检索高保真音源..."}
+                    })
+                    net_params = dict(intent.params)
+                    q = net_params.pop("query", "")
+                    art = net_params.pop("artist", "")
+                    net_params.pop("raw_text", None)
+                    wf_output = await self.network_discovery_workflow.execute(
+                        session_id=session_id,
+                        request_id=request_id,
+                        query=q,
+                        artist=art,
+                        raw_text=user_text,
+                        **net_params
                     )
 
                 duration_ms = (time.perf_counter() - start_time) * 1000

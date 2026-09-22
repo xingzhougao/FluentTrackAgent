@@ -87,6 +87,54 @@ class IntentRouter:
         is_create_playlist = (not is_referential_playlist) and (has_playlist_kw and has_create_act)
 
         # 匹配提取序号 (例如：“第十首”, "第10首", "第5首歌曲", "第2首歌", "最后一首")
+        # 0.0 多源网络发现与下载 (例如：“全网搜索周杰伦的夜曲并下载”, "全网搜夜曲", "从网上下载反方向的钟", "下载歌曲夜曲", "网上搜晴天")
+        is_net_kw = any(k in lower for k in ["全网", "网络", "网上"])
+        is_dl_kw = any(k in lower for k in ["下载", "下歌", "下曲", "缓存"])
+        if (is_net_kw and any(w in lower for w in ["搜", "找", "检索", "查", "听", "播", "放", "下载"])) or (is_dl_kw and not is_referential_playlist):
+            raw_target = clean
+            for prefix in [
+                "全网搜索", "全网检索", "全网找", "全网搜", "网络搜索", "网络检索",
+                "网上搜索", "网上搜", "网上找", "从网上下载", "从网络下载", "从网上找",
+                "从网络找", "从网上", "从网络", "下载歌曲", "去下载", "帮我下载", "下载"
+            ]:
+                if raw_target.startswith(prefix):
+                    raw_target = raw_target[len(prefix):].strip()
+                    break
+            for suffix in ["并下载", "且下载", "然后下载", "并播放", "且播放", "这首歌", "这首"]:
+                if raw_target.endswith(suffix):
+                    raw_target = raw_target[:-len(suffix)].strip()
+                    break
+
+            raw_target = raw_target.strip("《》\"'“”：: ")
+            song_q = raw_target
+            art_q = ""
+            known_singers = [
+                "周杰伦", "林俊杰", "陈奕迅", "王菲", "邓紫棋", "薛之谦", "张学友",
+                "蔡依林", "五月天", "李荣浩", "孙燕姿", "张惠妹", "莫文蔚", "许嵩",
+                "毛不易", "华晨宇", "梁静茹", "汪苏泷", "朴树", "李健", "刀郎"
+            ]
+            if "的" in raw_target:
+                parts = raw_target.split("的", 1)
+                p0 = parts[0].strip()
+                p1 = parts[1].strip()
+                if (any(s in p0 for s in known_singers) or (len(p0) in [2, 3] and len(p1) >= 2)) and len(p1) > 1:
+                    art_q = p0
+                    song_q = p1
+                else:
+                    song_q = raw_target
+
+            return IntentResult(
+                intent_type="NETWORK_DISCOVERY",
+                action="network_discovery",
+                params={
+                    "query": song_q,
+                    "artist": art_q,
+                    "raw_text": clean,
+                    "auto_download": True
+                }
+            )
+
+        # 匹配提取序号 (例如：“第十首”, "第10首", "第5首歌曲", "第2首歌", "最后一首")
         ord_pattern = re.search(r"第\s*([0-9一二两三四五六七八九十]+)\s*(?:首|个|曲)(?:歌曲|歌|曲目)?", lower)
         has_last_track = any(k in lower for k in ["最后一首", "最后首", "最后那首", "最后的一首"])
 
@@ -240,9 +288,12 @@ class IntentRouter:
         not_song_names = ["音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"]
 
         # 匹配歌手点歌，例如 “放一首周杰伦的歌” / “放周杰伦的歌” / “来首陈奕迅的歌”
-        artist_song_match = re.search(r"(?:播放|放一首|来一首|听一首|放|听|播|来首)\s*([^\s，,。！？的]+)的(?:歌|歌曲)", clean)
+        artist_song_match = re.search(
+            r"(?:给我播放一下|给我放一下|我想听一下|播放一下|放一下|听一下|来一下|播一下|给我播放|给我放|我想听|播放|放一首|来一首|听一首|放|听|播|来首)\s*([^\s，,。！？的]+)的(?:歌|歌曲)",
+            clean
+        )
         if artist_song_match:
-            art = artist_song_match.group(1).strip()
+            art = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", artist_song_match.group(1)).strip()
             if art not in not_song_names:
                 return IntentResult(
                     intent_type="SEARCH_AND_PLAY",
@@ -250,19 +301,29 @@ class IntentRouter:
                     params={"artist": art, "query": ""}
                 )
 
-        # 匹配 “播放[歌名]” / “放[歌名]”
-        play_match = re.search(r"^(?:播放|放一首|来一首|放首|听一首|听听|我想听|来首|播放歌曲|放)\s*([^\s，,。！？]{2,15})$", clean)
+        # 匹配 “播放[歌名]” / “放[歌名]” / “播放一下[歌手]的[歌名]”
+        play_match = re.search(
+            r"^(?:帮我播放一下|帮我放一下|帮我播放|帮我放|请帮我播放|请帮我放|"
+            r"给我播放一下|给我放一下|我想听一下|播放一下|放一下|听一下|来一下|播一下|"
+            r"给我播放|给我放|我想听|播放歌曲|播放|放一首|来一首|放首|听一首|听听|来首|放|播)\s*"
+            r"([^\r\n，,。！？]{2,40})$",
+            clean
+        )
         if play_match:
             song_candidate = play_match.group(1).strip()
+            song_candidate = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", song_candidate).strip()
             if song_candidate not in not_song_names:
-                # 检查是否包含歌手与歌名组合，例如 "周杰伦的晴天"
+                # 检查是否包含歌手与歌名组合，例如 "周杰伦的晴天"、"王小帅的我爱他"
                 if "的" in song_candidate:
                     parts = song_candidate.split("的", 1)
-                    return IntentResult(
-                        intent_type="SEARCH_AND_PLAY",
-                        action="search_and_play",
-                        params={"artist": parts[0].strip(), "query": parts[1].strip()}
-                    )
+                    parsed_art = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", parts[0]).strip()
+                    parsed_q = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", parts[1]).strip()
+                    if parsed_q:
+                        return IntentResult(
+                            intent_type="SEARCH_AND_PLAY",
+                            action="search_and_play",
+                            params={"artist": parsed_art, "query": parsed_q}
+                        )
                 return IntentResult(
                     intent_type="SEARCH_AND_PLAY",
                     action="search_and_play",
@@ -321,13 +382,15 @@ class IntentRouter:
    - search_and_play: {{"query": "歌名", "artist": "歌手"}}
 3. SMART_PLAYLIST (根据心情、情绪、工作学习场景推荐并播放):
    - smart_playlist: {{"mood": "情绪关键词", "scene": "场景关键词", "language": "语种", "count": 数量}}
-4. CHAT (常规聊天、问答、与播放操作无关):
+4. NETWORK_DISCOVERY (全网/网络搜索、下载曲目):
+   - network_discovery: {{"query": "歌名", "artist": "歌手", "auto_download": true}}
+5. CHAT (常规聊天、问答、与播放操作无关):
    - chat: {{}}
 
 用户指令: "{text}"
 
 请严格输出 JSON 对象，绝不要输出额外解释或 markdown 以外的文字：
-{{"intent_type": "PLAYER_CONTROL|SEARCH_AND_PLAY|SMART_PLAYLIST|CHAT", "action": "...", "params": {{}}}}
+{{"intent_type": "PLAYER_CONTROL|SEARCH_AND_PLAY|SMART_PLAYLIST|NETWORK_DISCOVERY|CHAT", "action": "...", "params": {{}}}}
 """
             raw = await effective_provider.chat_complete(
                 [ChatMessage(role="user", content=prompt)],
@@ -341,7 +404,7 @@ class IntentRouter:
                 intent_type = data.get("intent_type", "CHAT")
                 action = data.get("action", "")
                 params = data.get("params", {})
-                if intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST"]:
+                if intent_type in ["PLAYER_CONTROL", "SEARCH_AND_PLAY", "SMART_PLAYLIST", "NETWORK_DISCOVERY"]:
                     return IntentResult(
                         intent_type=intent_type,
                         action=action,

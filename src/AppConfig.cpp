@@ -87,6 +87,10 @@ void AppConfig::loadFromIni()
     QString rawLocalDir = settings.value(QStringLiteral("Music/local_music_dir"), QStringLiteral("qml/music_resource/loadmusic_by_default")).toString();
     m_localMusicDir = resolvePath(rawLocalDir);
 
+    QString rawDownloadDir = settings.value(QStringLiteral("Music/download_music_dir"), QStringLiteral("downloaded_songs")).toString();
+    m_downloadMusicDir = resolvePath(rawDownloadDir);
+    QDir(m_downloadMusicDir).mkpath(QStringLiteral("."));
+
     QString rawRecommendDir = settings.value(QStringLiteral("Music/recommend_music_dir"), QStringLiteral("downloaded_songs")).toString();
     m_recommendMusicDir = resolvePath(rawRecommendDir);
     // 若推荐目录不存在或为空，则自动回退到本地音乐目录
@@ -114,6 +118,7 @@ void AppConfig::loadFromIni()
     m_playlistsJsonPath = resolvePath(rawPlaylists);
 
     qDebug() << "[AppConfig] 本地音乐目录:" << m_localMusicDir;
+    qDebug() << "[AppConfig] 下载音乐目录:" << m_downloadMusicDir;
     qDebug() << "[AppConfig] 推荐音乐目录:" << m_recommendMusicDir;
     qDebug() << "[AppConfig] 收藏夹INI:" << m_favoritesIniPath;
     qDebug() << "[AppConfig] 最近播放INI:" << m_recentTracksIniPath;
@@ -128,6 +133,7 @@ void AppConfig::reload()
 QString AppConfig::projectRoot() const { return m_projectRoot; }
 QString AppConfig::configIniPath() const { return m_configIniPath; }
 QString AppConfig::localMusicDir() const { return m_localMusicDir; }
+QString AppConfig::downloadMusicDir() const { return m_downloadMusicDir; }
 QString AppConfig::recommendMusicDir() const { return m_recommendMusicDir; }
 int AppConfig::recommendCount() const { return m_recommendCount; }
 QString AppConfig::configDir() const { return m_configDir; }

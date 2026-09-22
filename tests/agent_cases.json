@@ -247,5 +247,33 @@
     "expected_params": {
       "ordinal_index": 9
     }
+  },
+  {
+    "id": "tc_network_discovery_yequ",
+    "query": "全网搜索周杰伦的夜曲并下载",
+    "expected_intent": "NETWORK_DISCOVERY",
+    "expected_action": "network_discovery",
+    "expected_params": {
+      "query": "夜曲",
+      "artist": "周杰伦"
+    }
+  },
+  {
+    "id": "tc_network_discovery_fanxiang",
+    "query": "全网搜反方向的钟",
+    "expected_intent": "NETWORK_DISCOVERY",
+    "expected_action": "network_discovery",
+    "expected_params": {
+      "query": "反方向的钟"
+    }
+  },
+  {
+    "id": "tc_network_download_qingtian",
+    "query": "从网上下载晴天",
+    "expected_intent": "NETWORK_DISCOVERY",
+    "expected_action": "network_discovery",
+    "expected_params": {
+      "query": "晴天"
+    }
   }
 ]

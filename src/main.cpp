@@ -21,6 +21,9 @@ int main(int argc,char * argv[])
     //创建音乐库Model
     MusicLibraryModel library;
     library.scanDirectory(config.localMusicDir());
+    // 永久持久化：启动时追加扫描下载目录与推荐目录中的新曲目
+    library.appendDirectory(config.downloadMusicDir());
+    library.appendDirectory(config.recommendMusicDir());
 
     //创建推荐音乐库 每次程序启动后重新抽取
     MusicLibraryModel recommendLibrary;

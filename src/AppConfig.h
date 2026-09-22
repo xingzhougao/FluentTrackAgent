@@ -7,6 +7,7 @@ class AppConfig : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString localMusicDir READ localMusicDir CONSTANT)
+    Q_PROPERTY(QString downloadMusicDir READ downloadMusicDir CONSTANT)
     Q_PROPERTY(QString recommendMusicDir READ recommendMusicDir CONSTANT)
     Q_PROPERTY(int recommendCount READ recommendCount CONSTANT)
     Q_PROPERTY(QString configDir READ configDir CONSTANT)
@@ -23,6 +24,7 @@ public:
     QString configIniPath() const;
 
     QString localMusicDir() const;
+    QString downloadMusicDir() const;
     QString recommendMusicDir() const;
     int recommendCount() const;
 
@@ -48,6 +50,7 @@ private:
     QString m_configIniPath;
 
     QString m_localMusicDir;
+    QString m_downloadMusicDir;
     QString m_recommendMusicDir;
     int m_recommendCount = 42;
 

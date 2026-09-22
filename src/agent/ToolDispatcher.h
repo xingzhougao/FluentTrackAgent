@@ -47,6 +47,9 @@ private:
     QJsonObject handleCreateTempPlaylist(const QJsonObject &args);
     QJsonObject handleGetLocalLibraryOverview();
 
+    // Step 5 新增原子工具
+    QJsonObject handleImportDownloadedTrack(const QJsonObject &args);
+
 private:
     QPointer<PlayerController> m_player;
     QPointer<FavoriteManager> m_favoriteManager;

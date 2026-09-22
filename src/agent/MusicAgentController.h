@@ -42,6 +42,7 @@ public slots:
     void newSession();
     void updateLlmConfig(const QString &provider, const QString &baseUrl, const QString &apiKey, const QString &modelName, bool enableThinking = false);
     void reconnect();
+    void respondConfirmation(const QString &confirmId, bool confirmed);
 
 signals:
     void isConnectedChanged(bool connected);
@@ -49,6 +50,7 @@ signals:
     void statusTextChanged(const QString &text);
     void currentModelChanged(const QString &model);
     void errorOccurred(const QString &error);
+    void confirmationRequired(const QString &confirmId, const QString &title, const QString &message, const QString &details);
 
 private slots:
     void onTransportConnected();

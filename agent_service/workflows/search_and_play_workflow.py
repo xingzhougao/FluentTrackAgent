@@ -195,7 +195,18 @@ class SearchAndPlayWorkflow(BaseWorkflow):
         tracks = res_data.get("tracks", [])
 
         if not success or not tracks:
-            logger.warning(f"[SearchAndPlayWorkflow] 本地未检索到曲目: {search_keyword}")
+            logger.info(f"[SearchAndPlayWorkflow] 本地未检索到曲目: '{search_keyword}'，自动流转至网络多源发现工作流")
+            if hasattr(self.runtime, "network_discovery_workflow") and self.runtime.network_discovery_workflow:
+                return await self.runtime.network_discovery_workflow.execute(
+                    session_id=session_id,
+                    request_id=request_id,
+                    query=clean_query,
+                    artist=artist,
+                    auto_download=True,
+                    raw_text=raw_text,
+                    **kwargs
+                )
+
             tool_card = {
                 "name": "曲库检索",
                 "action": "search_local_music",
@@ -203,11 +214,7 @@ class SearchAndPlayWorkflow(BaseWorkflow):
                 "status": "failed",
                 "result": "本地曲库暂未收录该曲目"
             }
-            ans = (
-                f"在本地音乐库中暂未找到「{search_keyword}」相关的歌曲 😥\n\n"
-                f"💡 提示：多源网络音乐检索与自动下载入库将在 Step 5 接入！\n"
-                f"目前您可以对我说「播放晴天」或「放一首周杰伦的歌」来聆听本地曲库已有的经典歌曲哦 🎵"
-            )
+            ans = f"在本地音乐库中暂未找到「{search_keyword}」相关的歌曲 😥"
             return WorkflowOutput(answer_text=ans, tools=[tool_card], success=False)
 
         # 3. 选定目标歌曲
