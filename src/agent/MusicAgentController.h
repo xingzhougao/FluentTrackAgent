@@ -12,6 +12,7 @@ class PlayerController;
 class FavoriteManager;
 class MusicLibraryModel;
 class PlaylistManager;
+class QProcess;
 
 class MusicAgentController : public QObject
 {
@@ -66,6 +67,11 @@ private slots:
     void onTransportError(const QString &error);
 
 private:
+    void startAgentService();
+    void stopAgentService();
+    QString findPythonExecutable() const;
+
+    QProcess *m_agentProcess = nullptr;
     MusicAgentTransport *m_transport;
     AgentMessageModel *m_messageModel;
     ToolDispatcher m_toolDispatcher;

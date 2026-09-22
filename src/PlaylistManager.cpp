@@ -188,13 +188,18 @@ QString PlaylistManager::getSaveFilePath() const
 MusicTrack PlaylistManager::resolveTrackFromFile(const QString & filePath) const
 {
     MusicTrack track;
-    QFileInfo info(filePath);
+    if (filePath.trimmed().isEmpty())
+        return track;
+
+    QString resolvedPath = AppConfig::instance().resolvePath(filePath);
+    QFileInfo info(resolvedPath);
     if (!info.exists())
     {
-        track.filePath = filePath;
-        track.title = info.completeBaseName();
-        track.artist = QStringLiteral("未知歌手");
-        track.album = QStringLiteral("未知专辑");
+        info.setFile(filePath);
+    }
+    if (!info.exists())
+    {
+        // 文件确实不存在（例如新机器上尚无歌曲），安全返回空 track，防止添加幽灵坏项
         return track;
     }
 
@@ -400,6 +405,9 @@ void PlaylistManager::savePlaylists()
     QFileInfo info(path);
     QDir().mkpath(info.absolutePath());
 
+    QString projRoot = AppConfig::instance().projectRoot();
+    QDir rootDir(projRoot);
+
     if (path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
     {
         QFile file(path);
@@ -420,7 +428,12 @@ void PlaylistManager::savePlaylists()
                 const QStringList paths = entry.model->allFilePaths();
                 for (const QString & p : paths)
                 {
-                    songs.append(p);
+                    QString rel = rootDir.relativeFilePath(p);
+                    if (!rel.startsWith(QStringLiteral("..")) && !QDir::isAbsolutePath(rel)) {
+                        songs.append(rel);
+                    } else {
+                        songs.append(p);
+                    }
                 }
             }
             obj[QStringLiteral("songs")] = songs;
@@ -450,7 +463,13 @@ void PlaylistManager::savePlaylists()
         for (int j = 0; j < paths.size(); ++j)
         {
             settings.setArrayIndex(j);
-            settings.setValue(QStringLiteral("filePath"), paths[j]);
+            QString songPath = paths[j];
+            QString rel = rootDir.relativeFilePath(songPath);
+            if (!rel.startsWith(QStringLiteral("..")) && !QDir::isAbsolutePath(rel)) {
+                settings.setValue(QStringLiteral("filePath"), rel);
+            } else {
+                settings.setValue(QStringLiteral("filePath"), songPath);
+            }
         }
         settings.endArray();
     }

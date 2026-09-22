@@ -1,7 +1,15 @@
 #include "MusicAgentController.h"
+#include "../AppConfig.h"
 #include <QDebug>
 #include <QUuid>
 #include <QSettings>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QTcpSocket>
+#include <QCoreApplication>
 
 MusicAgentController::MusicAgentController(QObject *parent)
     : QObject(parent)
@@ -17,12 +25,20 @@ MusicAgentController::MusicAgentController(QObject *parent)
     connect(m_transport, &MusicAgentTransport::messageReceived, this, &MusicAgentController::onTransportMessageReceived);
     connect(m_transport, &MusicAgentTransport::errorOccurred, this, &MusicAgentController::onTransportError);
 
+    // 自动拉起本地 Agent 微服务子进程（纯净环境，相对路径推导）
+    startAgentService();
+
     // 默认自动尝试连接本地 Agent 微服务
     m_transport->connectToServer();
+
+    if (qApp) {
+        connect(qApp, &QCoreApplication::aboutToQuit, this, &MusicAgentController::stopAgentService);
+    }
 }
 
 MusicAgentController::~MusicAgentController()
 {
+    stopAgentService();
 }
 
 void MusicAgentController::setPlayerController(PlayerController *player)
@@ -360,3 +376,140 @@ void MusicAgentController::onTransportError(const QString &error)
 {
     qWarning() << "[MusicAgentController] Transport 错误:" << error;
 }
+
+void MusicAgentController::startAgentService()
+{
+    // 1. 快速探活 127.0.0.1:8765 是否已有运行中的实例（如开发者在终端单独调试）
+    QTcpSocket probeSocket;
+    probeSocket.connectToHost(QStringLiteral("127.0.0.1"), 8765);
+    if (probeSocket.waitForConnected(200)) {
+        qDebug() << "[MusicAgentController] 检测到本地 8765 端口已有 Agent 服务运行，直接复用连接";
+        probeSocket.disconnectFromHost();
+        return;
+    }
+
+    // 2. 定位 agent_service/main.py 相对路径
+    QString projRoot = AppConfig::instance().projectRoot();
+    QString scriptPath = QDir::cleanPath(projRoot + QStringLiteral("/agent_service/main.py"));
+    if (!QFile::exists(scriptPath)) {
+        qWarning() << "[MusicAgentController] 未找到 Agent 服务入口脚本:" << scriptPath;
+        return;
+    }
+
+    // 3. 寻找 Python 解释器
+    QString pythonExe = findPythonExecutable();
+    qDebug() << "[MusicAgentController] 准备拉起 Agent 微服务，使用 Python:" << pythonExe;
+    qDebug() << "[MusicAgentController] 脚本路径:" << scriptPath;
+
+    // 4. 创建子进程并净化环境变量
+    if (!m_agentProcess) {
+        m_agentProcess = new QProcess(this);
+    } else if (m_agentProcess->state() != QProcess::NotRunning) {
+        return;
+    }
+
+    // 清除可能被外部第三方软件污染的环境变量（如 PYTHONPATH、PYTHONHOME）
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.remove(QStringLiteral("PYTHONPATH"));
+    env.remove(QStringLiteral("PYTHONHOME"));
+    env.insert(QStringLiteral("PYTHONIOENCODING"), QStringLiteral("utf-8"));
+    env.insert(QStringLiteral("PYTHONUTF8"), QStringLiteral("1"));
+    env.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));
+    m_agentProcess->setProcessEnvironment(env);
+    m_agentProcess->setWorkingDirectory(projRoot);
+
+    // 5. 绑定实时日志输出
+    connect(m_agentProcess, &QProcess::readyReadStandardOutput, this, [this]() {
+        if (!m_agentProcess) return;
+        QByteArray out = m_agentProcess->readAllStandardOutput();
+        QString str = QString::fromUtf8(out).trimmed();
+        if (!str.isEmpty()) {
+            qDebug().noquote() << "[AgentService stdout]" << str;
+        }
+    });
+    connect(m_agentProcess, &QProcess::readyReadStandardError, this, [this]() {
+        if (!m_agentProcess) return;
+        QByteArray err = m_agentProcess->readAllStandardError();
+        QString str = QString::fromUtf8(err).trimmed();
+        if (!str.isEmpty()) {
+            qDebug().noquote() << "[AgentService stderr]" << str;
+        }
+    });
+
+    connect(m_agentProcess, &QProcess::errorOccurred, this, [](QProcess::ProcessError error) {
+        qWarning() << "[MusicAgentController] Agent 服务进程发生异常，代码:" << error;
+    });
+
+    connect(m_agentProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [](int exitCode, QProcess::ExitStatus exitStatus) {
+        qDebug() << "[MusicAgentController] Agent 服务进程已退出，退出码:" << exitCode << "状态:" << exitStatus;
+    });
+
+    // 6. 启动命令：-E 彻底屏蔽环境变量，-X utf8 开启 UTF-8 模式
+    QStringList args;
+    args << QStringLiteral("-E")
+         << QStringLiteral("-X") << QStringLiteral("utf8")
+         << scriptPath
+         << QStringLiteral("--host") << QStringLiteral("127.0.0.1")
+         << QStringLiteral("--port") << QStringLiteral("8765");
+
+    m_agentProcess->start(pythonExe, args);
+    qDebug() << "[MusicAgentController] 已由主程序自动下发 Agent 服务拉起命令";
+}
+
+void MusicAgentController::stopAgentService()
+{
+    if (!m_agentProcess) return;
+
+    if (m_agentProcess->state() != QProcess::NotRunning) {
+        qDebug() << "[MusicAgentController] 正在关闭 Agent 微服务子进程...";
+        qint64 pid = m_agentProcess->processId();
+#ifdef Q_OS_WIN
+        if (pid > 0) {
+            // Windows 下强制结束进程树，同时清理 Python 及其伴生守护进程（如 slskd.exe）
+            QProcess::execute(QStringLiteral("taskkill"),
+                              QStringList() << QStringLiteral("/F")
+                                            << QStringLiteral("/T")
+                                            << QStringLiteral("/PID")
+                                            << QString::number(pid));
+        }
+#else
+        m_agentProcess->terminate();
+        if (!m_agentProcess->waitForFinished(1500)) {
+            m_agentProcess->kill();
+        }
+#endif
+        m_agentProcess->waitForFinished(1000);
+        qDebug() << "[MusicAgentController] Agent 微服务子进程已安全清理";
+    }
+}
+
+QString MusicAgentController::findPythonExecutable() const
+{
+    QString projRoot = AppConfig::instance().projectRoot();
+    QStringList candidates = {
+        projRoot + QStringLiteral("/.venv/Scripts/python.exe"),
+        projRoot + QStringLiteral("/venv/Scripts/python.exe"),
+        projRoot + QStringLiteral("/.venv/bin/python"),
+        projRoot + QStringLiteral("/venv/bin/python")
+    };
+
+    for (const QString & cand : candidates) {
+        if (QFile::exists(cand)) {
+            return QDir::toNativeSeparators(cand);
+        }
+    }
+
+    QString systemPython = QStandardPaths::findExecutable(QStringLiteral("python"));
+    if (!systemPython.isEmpty()) {
+        return systemPython;
+    }
+
+    QString systemPy = QStandardPaths::findExecutable(QStringLiteral("py"));
+    if (!systemPy.isEmpty()) {
+        return systemPy;
+    }
+
+    return QStringLiteral("python");
+}
+

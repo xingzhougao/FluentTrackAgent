@@ -98,11 +98,18 @@ void RecentManager::loadRecentTracks()
     {
         settings.setArrayIndex(i);
         QString filePath = settings.value(QStringLiteral("filePath")).toString();
-        if (filePath.isEmpty() || !QFileInfo::exists(filePath))
+        if (filePath.trimmed().isEmpty())
             continue;
 
+        QString resolvedPath = AppConfig::instance().resolvePath(filePath);
+        if (!QFileInfo::exists(resolvedPath)) {
+            if (!QFileInfo::exists(filePath))
+                continue;
+            resolvedPath = filePath;
+        }
+
         MusicTrack track;
-        track.filePath = filePath;
+        track.filePath = resolvedPath;
         track.title = settings.value(QStringLiteral("title")).toString();
         track.artist = settings.value(QStringLiteral("artist")).toString();
         track.album = settings.value(QStringLiteral("album")).toString();
@@ -123,12 +130,20 @@ void RecentManager::saveRecentTracks()
     QString path = getIniPath();
     QSettings settings(path, QSettings::IniFormat);
     settings.clear();
+    QString projRoot = AppConfig::instance().projectRoot();
+    QDir rootDir(projRoot);
+
     settings.beginWriteArray(QStringLiteral("recent_tracks"), m_model->count());
     for (int i = 0; i < m_model->count(); ++i)
     {
         settings.setArrayIndex(i);
         const MusicTrack track = m_model->trackAt(i);
-        settings.setValue(QStringLiteral("filePath"), track.filePath);
+        QString rel = rootDir.relativeFilePath(track.filePath);
+        if (!rel.startsWith(QStringLiteral("..")) && !QDir::isAbsolutePath(rel)) {
+            settings.setValue(QStringLiteral("filePath"), rel);
+        } else {
+            settings.setValue(QStringLiteral("filePath"), track.filePath);
+        }
         settings.setValue(QStringLiteral("title"), track.title);
         settings.setValue(QStringLiteral("artist"), track.artist);
         settings.setValue(QStringLiteral("album"), track.album);

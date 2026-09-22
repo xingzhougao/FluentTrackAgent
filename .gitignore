@@ -9,3 +9,4 @@ agent_service/.idea
 agent_service/__pycache__
 __pycache__/
 tools/
+/config/covers

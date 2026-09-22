@@ -86,6 +86,7 @@ void AppConfig::loadFromIni()
     // 读取音乐目录
     QString rawLocalDir = settings.value(QStringLiteral("Music/local_music_dir"), QStringLiteral("qml/music_resource/loadmusic_by_default")).toString();
     m_localMusicDir = resolvePath(rawLocalDir);
+    QDir(m_localMusicDir).mkpath(QStringLiteral("."));
 
     QString rawDownloadDir = settings.value(QStringLiteral("Music/download_music_dir"), QStringLiteral("downloaded_songs")).toString();
     m_downloadMusicDir = resolvePath(rawDownloadDir);

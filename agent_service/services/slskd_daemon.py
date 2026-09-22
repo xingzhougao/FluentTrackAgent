@@ -120,18 +120,31 @@ class SlskdDaemonManager:
         self.download_dir.mkdir(parents=True, exist_ok=True)
         self.incomplete_dir.mkdir(parents=True, exist_ok=True)
 
-        # 若已存在配置则保留
+        # Windows 路径转为安全 YAML 格式 (使用反斜杠且双反斜杠转义)
+        downloads_str = str(self.download_dir).replace("/", "\\").replace("\\", "\\\\")
+        incomplete_str = str(self.incomplete_dir).replace("/", "\\").replace("\\", "\\\\")
+
+        # 若已存在配置，校验其路径是否为当前机器路径，若换了电脑/目录则自动纠正
         if self.config_path.exists():
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if downloads_str not in content:
+                    import re
+                    content = re.sub(r'downloads:\s*".*?"', f'downloads: "{downloads_str}"', content)
+                    content = re.sub(r'incomplete:\s*".*?"', f'incomplete: "{incomplete_str}"', content)
+                    content = re.sub(r'shares:\s*\n\s*directories:\s*\n\s*-\s*".*?"', f'shares:\n  directories:\n    - "{downloads_str}"', content)
+                    with open(self.config_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.info("[SlskdDaemon] slskd 配置文件路径已自动同步为当前机器真实路径")
+            except Exception as e:
+                logger.debug(f"[SlskdDaemon] 校验/纠正配置路径异常: {e}")
             return
 
         # 随机分配一个免冲突的游客账户 (Soulseek 在初次登录时若用户名未注册会自动为其激活创建)
         random_suffix = uuid.uuid4().hex[:6]
         guest_user = f"fluent_guest_{random_suffix}"
         guest_pass = f"pass_{uuid.uuid4().hex[:8]}"
-
-        # Windows 路径转为安全 YAML 格式 (使用反斜杠且双反斜杠转义)
-        downloads_str = str(self.download_dir).replace("/", "\\").replace("\\", "\\\\")
-        incomplete_str = str(self.incomplete_dir).replace("/", "\\").replace("\\", "\\\\")
 
         yaml_content = f"""# slskd 自动生成的内置伴生配置 (由 Fluent Music AI Agent 管理)
 soulseek:
