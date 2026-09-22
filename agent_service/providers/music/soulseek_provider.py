@@ -85,10 +85,10 @@ class SoulseekMusicProvider(BaseMusicProvider):
         while elapsed < max_wait:
             try:
                 async with httpx.AsyncClient(timeout=1.5) as client:
-                    resp = await client.get(f"{self.api_base_url}/application", headers=self._get_headers())
+                    resp = await client.get(f"{self.api_base_url}/server", headers=self._get_headers())
                     if resp.status_code == 200:
-                        server = resp.json().get("server", {})
-                        if server.get("isLoggedIn") and not server.get("isLoggingIn"):
+                        s_info = resp.json()
+                        if s_info.get("isLoggedIn") and not s_info.get("isLoggingIn"):
                             return True
             except Exception:
                 pass
@@ -102,88 +102,116 @@ class SoulseekMusicProvider(BaseMusicProvider):
             logger.debug("[SoulseekProvider] slskd 未就绪，跳过 P2P 检索")
             return []
 
-        # 检查是否已完成中央服务器登录
-        is_ready = await self.ensure_logged_in(max_wait=6.0)
-        if not is_ready:
-            logger.info("[SoulseekProvider] P2P 服务器处于初始连接或重连中，本次检索优雅跳过")
-            return []
+        # 尝试等待中央服务器连接就绪 (最多等待 8 秒，若重连中则等待握手完成)
+        await self.ensure_logged_in(max_wait=8.0)
 
         clean_q = query.strip()
         clean_art = artist.strip()
         if not clean_q and not clean_art:
             return []
 
-        # 确定主检索关键词：海外及港台无损 P2P 曲库以标准繁体字为主 (如 蕭瀟、愛要坦蕩蕩)，优先使用繁体检索
+        # 确定检索关键词集合：覆盖繁体字 (港台/海外曲库) 与简体字 (内地曲库)
         trad_q = to_traditional(clean_q)
-        primary_term = trad_q if trad_q else clean_q
+        search_terms = []
+        if trad_q:
+            search_terms.append(trad_q)
+        if clean_q and clean_q not in search_terms:
+            search_terms.append(clean_q)
 
         results: List[TrackCandidate] = []
         seen_filenames = set()
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                post_resp = await client.post(
-                    f"{self.api_base_url}/searches",
-                    json={"searchText": primary_term},
-                    headers=self._get_headers()
-                )
-                retry_count = 0
-                while post_resp.status_code == 409 and retry_count < 3:
-                    retry_count += 1
-                    await asyncio.sleep(1.5)
-                    post_resp = await client.post(
-                        f"{self.api_base_url}/searches",
-                        json={"searchText": primary_term},
-                        headers=self._get_headers()
-                    )
+                search_ids = []
+                for term in search_terms:
+                    try:
+                        post_resp = await client.post(
+                            f"{self.api_base_url}/searches",
+                            json={"searchText": term},
+                            headers=self._get_headers()
+                        )
+                        retry_count = 0
+                        while post_resp.status_code == 409 and retry_count < 8:
+                            retry_count += 1
+                            logger.debug(f"[SoulseekProvider] P2P 服务器连接状态转换中，等待重试 ({retry_count}/8)...")
+                            await asyncio.sleep(1.0)
+                            post_resp = await client.post(
+                                f"{self.api_base_url}/searches",
+                                json={"searchText": term},
+                                headers=self._get_headers()
+                            )
+                        if post_resp.status_code in [200, 201]:
+                            s_data = post_resp.json()
+                            sid = s_data.get("id") if isinstance(s_data, dict) else str(s_data).strip('"')
+                            if sid:
+                                search_ids.append(sid)
+                    except Exception as ex:
+                        logger.debug(f"[SoulseekProvider] 发起 P2P 检索 '{term}' 失败: {ex}")
 
-                if post_resp.status_code not in [200, 201]:
+                if not search_ids:
                     return []
 
-                s_data = post_resp.json()
-                search_id = s_data.get("id") if isinstance(s_data, dict) else str(s_data).strip('"')
-                if not search_id:
-                    return []
-
-                # 轮询直至完成或超时
-                max_poll_secs = 22.0
+                # 轮询直至所有检索完成、已收到充分结果或超时 (Soulseek P2P 汇聚通常需要 12~24s)
+                max_poll_secs = 27.5
                 poll_step = 0.8
                 elapsed_poll = 0.0
-                search_has_results = False
+                all_responses = []
 
                 while elapsed_poll < max_poll_secs:
                     await asyncio.sleep(poll_step)
                     elapsed_poll += poll_step
-                    try:
-                        status_resp = await client.get(
-                            f"{self.api_base_url}/searches/{search_id}",
-                            headers=self._get_headers()
-                        )
-                        if status_resp.status_code == 200:
-                            s_data = status_resp.json()
-                            state = s_data.get("state", "")
-                            resp_count = s_data.get("responseCount", 0)
-                            if resp_count > 0:
-                                search_has_results = True
-                            if "Completed" in state:
-                                break
-                    except Exception:
-                        pass
+                    all_done = True
+                    for sid in search_ids:
+                        try:
+                            status_resp = await client.get(
+                                f"{self.api_base_url}/searches/{sid}",
+                                headers=self._get_headers()
+                            )
+                            if status_resp.status_code == 200:
+                                s_data = status_resp.json()
+                                state = s_data.get("state", "")
+                                if "Completed" not in state:
+                                    all_done = False
+                        except Exception:
+                            all_done = False
 
-                all_responses = []
-                try:
-                    resp_list = await client.get(
-                        f"{self.api_base_url}/searches/{search_id}/responses",
-                        headers=self._get_headers()
-                    )
-                    if resp_list.status_code == 200:
-                        data = resp_list.json()
-                        if isinstance(data, list):
-                            all_responses = data
-                        elif isinstance(data, dict) and data.get("responses"):
-                            all_responses = data.get("responses")
-                except Exception as ex:
-                    logger.debug(f"[SoulseekProvider] 获取 responses 异常: {ex}")
+                    # 若已全部完成，直接退出并取回结果
+                    if all_done:
+                        break
+                    # 若已轮询超过 12 秒且已获取到多个 Peer 响应，提前退出以加快响应速度
+                    if elapsed_poll >= 12.0:
+                        cur_resps = []
+                        for sid in search_ids:
+                            try:
+                                r_l = await client.get(
+                                    f"{self.api_base_url}/searches/{sid}/responses",
+                                    headers=self._get_headers()
+                                )
+                                if r_l.status_code == 200 and r_l.json():
+                                    cur_resps.extend(r_l.json())
+                            except Exception:
+                                pass
+                        if len(cur_resps) >= 2:
+                            all_responses = cur_resps
+                            break
+
+                if not all_responses:
+                    await asyncio.sleep(0.5)
+                    for sid in search_ids:
+                        try:
+                            resp_list = await client.get(
+                                f"{self.api_base_url}/searches/{sid}/responses",
+                                headers=self._get_headers()
+                            )
+                            if resp_list.status_code == 200:
+                                data = resp_list.json()
+                                if isinstance(data, list):
+                                    all_responses.extend(data)
+                                elif isinstance(data, dict) and data.get("responses"):
+                                    all_responses.extend(data.get("responses"))
+                        except Exception as ex:
+                            logger.debug(f"[SoulseekProvider] 获取 responses 异常: {ex}")
 
                 # 汇聚所有匹配的候选文件，并记录 Peer 列表
                 peer_candidates: List[Dict[str, Any]] = []

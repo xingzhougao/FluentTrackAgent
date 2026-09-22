@@ -44,7 +44,7 @@ class MusicProviderManager:
         query: str,
         artist: str = "",
         limit: int = 5,
-        timeout: float = 30.0
+        timeout: float = 32.0
     ) -> List[TrackCandidate]:
         """
         多源并发检索、去重与按主力源优先排序
@@ -141,6 +141,7 @@ class MusicProviderManager:
                 cand.extra = {}
             cand.extra["tier_name"] = tier_name
             cand.extra["tier"] = tier_num
+            cand.extra["tier_num"] = tier_num
 
             # 区分不同音质或不同版本，保留真实多样性
             norm_key = f"{cand.provider}__{cand.format}__{v_tag}__{cand.title.strip().lower()}__{cand.artist.strip().lower()}"

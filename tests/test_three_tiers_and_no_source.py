@@ -96,7 +96,7 @@ async def run_tests():
 
     async def mock_client_respond():
         nonlocal modal_dispatched
-        for _ in range(30):
+        for _ in range(120):
             await asyncio.sleep(0.5)
             if runtime.confirmation_manager.pending_confirmations:
                 cid = list(runtime.confirmation_manager.pending_confirmations.keys())[0]

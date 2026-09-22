@@ -89,13 +89,20 @@ class IntentRouter:
         # 匹配提取序号 (例如：“第十首”, "第10首", "第5首歌曲", "第2首歌", "最后一首")
         # 0.0 多源网络发现与下载 (例如：“全网搜索周杰伦的夜曲并下载”, "全网搜夜曲", "从网上下载反方向的钟", "下载歌曲夜曲", "网上搜晴天")
         is_net_kw = any(k in lower for k in ["全网", "网络", "网上"])
-        is_dl_kw = any(k in lower for k in ["下载", "下歌", "下曲", "缓存"])
-        if (is_net_kw and any(w in lower for w in ["搜", "找", "检索", "查", "听", "播", "放", "下载"])) or (is_dl_kw and not is_referential_playlist):
+        # 严谨的下载关键词判断：绝不能因为包含“一下歌”或“下一首歌”等常规口语而误判为下载指令
+        is_dl_kw = ("下载" in lower) or ("缓存" in lower) or any(k in lower for k in ["去下载", "帮我下载", "去下这首", "帮我下这首"])
+        # 排除常规点歌指令（如“帮我播放一下歌曲冬眠”，应当流转至常规点歌与本地优先检索）
+        is_regular_play = any(lower.startswith(p) for p in [
+            "帮我播放", "请帮我播放", "给我播放", "我想播放", "我要播放",
+            "帮我放", "请帮我放", "给我放", "我想听", "我要听",
+            "播放", "放一下", "播一下", "听一下", "来一首", "放一首"
+        ])
+        if ((is_net_kw and any(w in lower for w in ["搜", "找", "检索", "查", "听", "播", "放", "下载"])) or (is_dl_kw and not is_referential_playlist)) and not is_regular_play:
             raw_target = clean
             for prefix in [
                 "全网搜索", "全网检索", "全网找", "全网搜", "网络搜索", "网络检索",
                 "网上搜索", "网上搜", "网上找", "从网上下载", "从网络下载", "从网上找",
-                "从网络找", "从网上", "从网络", "下载歌曲", "去下载", "帮我下载", "下载"
+                "从网络找", "从网上", "从网络", "下载歌曲", "去下载", "帮我下载", "下载", "缓存"
             ]:
                 if raw_target.startswith(prefix):
                     raw_target = raw_target[len(prefix):].strip()
@@ -104,6 +111,12 @@ class IntentRouter:
                 if raw_target.endswith(suffix):
                     raw_target = raw_target[:-len(suffix)].strip()
                     break
+
+            while True:
+                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", raw_target).strip()
+                if stripped == raw_target:
+                    break
+                raw_target = stripped
 
             raw_target = raw_target.strip("《》\"'“”：: ")
             song_q = raw_target
@@ -117,11 +130,17 @@ class IntentRouter:
                 parts = raw_target.split("的", 1)
                 p0 = parts[0].strip()
                 p1 = parts[1].strip()
-                if (any(s in p0 for s in known_singers) or (len(p0) in [2, 3] and len(p1) >= 2)) and len(p1) > 1:
+                p1 = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", p1).strip()
+                if (any(s in p0 for s in known_singers) or (len(p0) in [2, 3, 4] and len(p1) >= 1)):
                     art_q = p0
                     song_q = p1
                 else:
                     song_q = raw_target
+            elif " " in raw_target:
+                parts = raw_target.split(None, 1)
+                if len(parts) == 2 and (any(s in parts[0] for s in known_singers) or len(parts[0]) in [2, 3, 4]):
+                    art_q = parts[0].strip()
+                    song_q = parts[1].strip()
 
             return IntentResult(
                 intent_type="NETWORK_DISCOVERY",
@@ -288,12 +307,13 @@ class IntentRouter:
         not_song_names = ["音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"]
 
         # 匹配歌手点歌，例如 “放一首周杰伦的歌” / “放周杰伦的歌” / “来首陈奕迅的歌”
+        # 匹配歌手点歌，例如 “放一首周杰伦的歌” / “放周杰伦的歌” / “来首陈奕迅的歌”
         artist_song_match = re.search(
             r"(?:给我播放一下|给我放一下|我想听一下|播放一下|放一下|听一下|来一下|播一下|给我播放|给我放|我想听|播放|放一首|来一首|听一首|放|听|播|来首)\s*([^\s，,。！？的]+)的(?:歌|歌曲)",
             clean
         )
         if artist_song_match:
-            art = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", artist_song_match.group(1)).strip()
+            art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", artist_song_match.group(1)).strip()
             if art not in not_song_names:
                 return IntentResult(
                     intent_type="SEARCH_AND_PLAY",
@@ -301,29 +321,47 @@ class IntentRouter:
                     params={"artist": art, "query": ""}
                 )
 
-        # 匹配 “播放[歌名]” / “放[歌名]” / “播放一下[歌手]的[歌名]”
+        # 匹配精准与模糊点歌：例如 “帮我播放一下歌曲爱要怎么说出口”, “帮我播放一下 周杰伦的爱情废柴”, “播放歌曲冬眠”, “我想听晴天”
         play_match = re.search(
-            r"^(?:帮我播放一下|帮我放一下|帮我播放|帮我放|请帮我播放|请帮我放|"
-            r"给我播放一下|给我放一下|我想听一下|播放一下|放一下|听一下|来一下|播一下|"
-            r"给我播放|给我放|我想听|播放歌曲|播放|放一首|来一首|放首|听一首|听听|来首|放|播)\s*"
+            r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
+            r"(?:播放|放|听|播|来|搜|找)\s*"
+            r"(?:一下|一首|首|个|点|曲)?\s*"
+            r"(?:歌曲|这首歌曲|这首歌|音乐|曲目|歌)?\s*"
             r"([^\r\n，,。！？]{2,40})$",
             clean
         )
         if play_match:
-            song_candidate = play_match.group(1).strip()
-            song_candidate = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", song_candidate).strip()
-            if song_candidate not in not_song_names:
-                # 检查是否包含歌手与歌名组合，例如 "周杰伦的晴天"、"王小帅的我爱他"
+            raw_cand = play_match.group(1).strip()
+            song_candidate = raw_cand
+            while True:
+                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", song_candidate).strip()
+                if stripped == song_candidate:
+                    break
+                song_candidate = stripped
+
+            if song_candidate and song_candidate not in not_song_names:
+                # 检查是否包含歌手与歌名组合，例如 "周杰伦的晴天"、"周杰伦的爱情废柴"
                 if "的" in song_candidate:
                     parts = song_candidate.split("的", 1)
-                    parsed_art = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", parts[0]).strip()
-                    parsed_q = re.sub(r"^(?:一下|一首|首|个|点)\s*", "", parts[1]).strip()
-                    if parsed_q:
+                    parsed_art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[0]).strip()
+                    parsed_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[1]).strip()
+                    if parsed_q and parsed_q not in not_song_names:
                         return IntentResult(
                             intent_type="SEARCH_AND_PLAY",
                             action="search_and_play",
                             params={"artist": parsed_art, "query": parsed_q}
                         )
+                elif " " in song_candidate:
+                    parts = song_candidate.split(None, 1)
+                    if len(parts) == 2 and len(parts[0]) in [2, 3, 4] and len(parts[1]) >= 1:
+                        parsed_art = parts[0].strip()
+                        parsed_q = parts[1].strip()
+                        if parsed_q and parsed_q not in not_song_names:
+                            return IntentResult(
+                                intent_type="SEARCH_AND_PLAY",
+                                action="search_and_play",
+                                params={"artist": parsed_art, "query": parsed_q}
+                            )
                 return IntentResult(
                     intent_type="SEARCH_AND_PLAY",
                     action="search_and_play",
