@@ -51,6 +51,8 @@ Item {
                     size_str: c.size_str || "",
                     is_netdisk: !!c.is_netdisk,
                     version_tag: c.version_tag || "原版音频",
+                    has_lrc: c.has_lrc !== undefined ? !!c.has_lrc : true,
+                    lrc_tag: c.lrc_tag || "含LRC歌词",
                     url: c.url || ""
                 });
             }
@@ -314,7 +316,27 @@ Item {
                                     color: "#475569"
                                     font.pixelSize: 11
                                     elide: Text.ElideRight
-                                    Layout.maximumWidth: 200
+                                    Layout.maximumWidth: 150
+                                }
+
+                                // 歌词双轨配对徽章
+                                Rectangle {
+                                    Layout.preferredHeight: 18
+                                    Layout.preferredWidth: lrcBadgeText.implicitWidth + 8
+                                    radius: 3
+                                    color: "#042f2e"
+                                    border.color: "#0d9488"
+                                    border.width: 1
+                                    visible: model.has_lrc
+
+                                    Text {
+                                        id: lrcBadgeText
+                                        anchors.centerIn: parent
+                                        text: "📜 " + (model.lrc_tag || "含LRC歌词")
+                                        color: "#2dd4bf"
+                                        font.pixelSize: 10
+                                        font.weight: Font.Medium
+                                    }
                                 }
                             }
                         }
@@ -379,7 +401,7 @@ Item {
                         font.pixelSize: 13
                     }
                     Text {
-                        text: "已提交下载《" + selectionDialogItem.submittedTitle + "》，后台正在入库收录中..."
+                        text: "已提交下载《" + selectionDialogItem.submittedTitle + "》，后台正在同步收录音频与打点 LRC 歌词..."
                         color: "#34d399"
                         font.pixelSize: 12
                         font.weight: Font.Medium
@@ -391,7 +413,7 @@ Item {
                 // 未提交时的提示文本
                 Text {
                     visible: !selectionDialogItem.isSubmitted
-                    text: "💡 点击选择目标版本，或双击立即下载开播"
+                    text: "💡 双击开播，音频与同步打点 LRC 歌词将双轨配对存盘收录"
                     color: "#64748b"
                     font.pixelSize: 11
                     Layout.fillWidth: true

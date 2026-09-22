@@ -178,9 +178,20 @@ class MusicProviderManager:
                 for c in final_list:
                     if c not in combined and len(combined) < limit:
                         combined.append(c)
-            return combined[:limit]
+            out_list = combined[:limit]
+        else:
+            out_list = final_list[:limit]
 
-        return final_list[:limit]
+        # 为所有输出候选注入双轨歌词配对元数据
+        for c in out_list:
+            if not c.extra:
+                c.extra = {}
+            if "has_lrc" not in c.extra:
+                c.extra["has_lrc"] = True
+            if "lrc_tag" not in c.extra:
+                c.extra["lrc_tag"] = "含配对LRC歌词"
+
+        return out_list
 
     async def _safe_search(
         self,

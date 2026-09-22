@@ -7,7 +7,10 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
 
-from cache.tag_cache import AgentTagCache, TagRecord
+try:
+    from cache.tag_cache import AgentTagCache, TagRecord
+except ImportError:
+    from agent_service.cache.tag_cache import AgentTagCache, TagRecord
 
 logger = logging.getLogger("AgentLogger")
 

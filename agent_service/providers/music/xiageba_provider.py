@@ -207,6 +207,9 @@ class XiagebaProvider(BaseMusicProvider):
                             "version_tag": version_tag,
                             "is_remix": is_remix,
                             "is_cover": is_cover,
+                            "lyrics": detail_data.get("lyrics", ""),
+                            "has_lrc": True,
+                            "lrc_tag": "含LRC歌词",
                             "raw_downloads": downloads
                         }
                     )

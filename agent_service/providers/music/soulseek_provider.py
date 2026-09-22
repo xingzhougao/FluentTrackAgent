@@ -363,6 +363,8 @@ class SoulseekMusicProvider(BaseMusicProvider):
                             "is_remix": is_remix,
                             "is_cover": is_cover,
                             "artist_matches": art_in_file if clean_art else True,
+                            "has_lrc": True,
+                            "lrc_tag": "双轨配对歌词",
                             "peers": peer_candidates
                         }
                     ))

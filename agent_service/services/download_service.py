@@ -64,6 +64,8 @@ class DownloadService:
                 head = f_check.read(16)
                 if head.startswith(b"ID3") or head.startswith(b"fLaC") or b"\xff\xfb" in head or b"\xff\xfa" in head:
                     logger.info(f"[DownloadService] 本地已存在合法曲目，无需重复下载: {target_path}")
+                    if not os.path.exists(target_lrc_path) or os.path.getsize(target_lrc_path) < 20:
+                        await self._fetch_or_create_lrc(candidate, target_lrc_path)
                     self._sync_to_local_music_dir(target_path, target_lrc_path)
                     return target_path
 
@@ -201,58 +203,27 @@ class DownloadService:
         return target_path
 
     async def _fetch_or_create_lrc(self, candidate: TrackCandidate, lrc_path: str):
-        """拉取真实网易云精准歌词，或生成具备标准时间戳的高拟真歌词"""
-        song_id = ""
-        if candidate.url and "id=" in candidate.url:
-            m = re.search(r"[?&]id=(\d+)", candidate.url)
-            if m:
-                song_id = m.group(1)
-        elif candidate.id.startswith("web_") and candidate.id[4:].isdigit():
-            song_id = candidate.id[4:]
+        """调用 LyricService 拉取真实打点歌词，保证与音频完全同步"""
+        extra = getattr(candidate, "extra", {}) or {}
+        preset_lrc = extra.get("lyrics", "")
 
-        lrc_text = ""
-        if song_id:
-            try:
-                lrc_url = f"https://music.163.com/api/song/lyric?id={song_id}&lv=1&kv=1&tv=-1"
-                async with httpx.AsyncClient(timeout=4.0) as client:
-                    r = await client.get(lrc_url, headers={"User-Agent": "Mozilla/5.0"})
-                    if r.status_code == 200:
-                        lrc_data = r.json()
-                        raw_lrc = lrc_data.get("lrc", {}).get("lyric", "")
-                        if raw_lrc and "[" in raw_lrc:
-                            lrc_text = raw_lrc
-                            logger.info(f"[DownloadService] 成功在线获取歌曲《{candidate.title}》的真实打点歌词")
-            except Exception as e:
-                logger.debug(f"[DownloadService] 获取在线歌词异常: {e}")
+        try:
+            from services.lyric_service import lyric_service
+        except ImportError:
+            from agent_service.services.lyric_service import lyric_service
 
-        if not lrc_text:
-            # 自动生成标准时间戳歌词 (确保总时长达到 03:45 左右，使播放器计算真实时长)
-            title = candidate.title
-            artist = candidate.artist
-            lrc_lines = [
-                f"[00:00.00]{title} - {artist}",
-                f"[00:02.50]作词：{artist}",
-                f"[00:05.00]作曲：{artist}",
-                f"[00:08.00]演唱：{artist}",
-                f"[00:15.00]（前奏旋律）",
-                f"[00:25.00]在时光交织的每一个瞬间",
-                f"[00:35.00]聆听音乐带来的宁静与感动",
-                f"[00:48.00]跨越山河去拥抱微风",
-                f"[01:05.00]旋律在耳边缓缓流淌",
-                f"[01:25.00]每一次跳动的音符都是美好的记忆",
-                f"[01:45.00]陪伴你走过日落与晨光",
-                f"[02:10.00]（间奏）",
-                f"[02:30.00]愿音乐陪伴你身旁",
-                f"[02:50.00]无论身在何方",
-                f"[03:15.00]心中依然有最初的向往",
-                f"[03:40.00]感谢聆听《{title}》"
-            ]
-            lrc_text = "\n".join(lrc_lines)
+        duration_sec = float(candidate.duration) if candidate.duration > 0 else 240.0
+        lrc_text, src = await lyric_service.fetch_paired_lrc(
+            title=candidate.title,
+            artist=candidate.artist,
+            duration_sec=duration_sec,
+            preset_lrc=preset_lrc
+        )
 
         try:
             with open(lrc_path, "w", encoding="utf-8") as f:
                 f.write(lrc_text)
-            logger.info(f"[DownloadService] 歌词文件已写入: {lrc_path}")
+            logger.info(f"[DownloadService] 歌词文件双轨配对写入成功 (来源={src}): {lrc_path}")
         except Exception as e:
             logger.error(f"[DownloadService] 写入歌词文件失败: {e}")
 

@@ -130,6 +130,8 @@ class ConfirmationManager:
                 "size_str": size_str,
                 "is_netdisk": is_netdisk,
                 "version_tag": v_tag,
+                "has_lrc": extra.get("has_lrc", True),
+                "lrc_tag": extra.get("lrc_tag", "含LRC歌词"),
                 "url": c.url or ""
             })
 
