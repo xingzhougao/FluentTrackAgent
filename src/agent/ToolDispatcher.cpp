@@ -252,6 +252,7 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
     }
 
     QString query = args.value("query").toString().trimmed();
+    QString artist = args.value("artist").toString().trimmed();
     int limit = args.value("limit").toInt(10);
     if (limit <= 0) limit = 10;
 
@@ -270,77 +271,82 @@ QJsonObject ToolDispatcher::handleSearchLocalMusic(const QJsonObject &args)
         const MusicTrack t = m_library->trackAt(i);
         bool isFav = m_favoriteManager ? m_favoriteManager->isFavorite(t.filePath) : t.favorite;
 
-        if (query.isEmpty() || query == "*") {
+        if ((query.isEmpty() || query == "*") && artist.isEmpty()) {
             matches.append({i, t, 10, isFav, ""});
             continue;
         }
 
-        int score = 0;
-        QString matchedLyric;
+        // 1. 歌手匹配度检查
+        bool artistSpecified = !artist.isEmpty();
+        bool artistMatched = false;
+        int artistScore = 0;
 
-        if (t.title.compare(query, Qt::CaseInsensitive) == 0) {
-            score = 100;
-        } else if (t.artist.compare(query, Qt::CaseInsensitive) == 0) {
-            score = 80;
-        } else if (t.title.contains(query, Qt::CaseInsensitive)) {
-            score = 60;
-        } else if (t.artist.contains(query, Qt::CaseInsensitive)) {
-            score = 50;
-        } else if (t.album.contains(query, Qt::CaseInsensitive)) {
-            score = 30;
-        }
-
-        // 尝试从同名 .lrc 文件中检索歌词内容
-        if (query.length() >= 2) {
-            QString lrcPath = QFileInfo(t.filePath).absolutePath() + "/" + QFileInfo(t.filePath).completeBaseName() + ".lrc";
-            QFile lrcFile(lrcPath);
-            if (lrcFile.exists() && lrcFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                QTextStream in(&lrcFile);
-                static const QRegularExpression timeTagRegex(R"(\[\d{1,2}:\d{2}(?:\.\d{1,3})?\])");
-                while (!in.atEnd()) {
-                    QString line = in.readLine().trimmed();
-                    line.remove(timeTagRegex);
-                    line = line.trimmed();
-                    if (line.isEmpty()) continue;
-
-                    // 1. 歌词完整包含 query
-                    if (line.contains(query, Qt::CaseInsensitive)) {
-                        if (score < 85) score = 85;
-                        matchedLyric = line;
-                        break;
-                    }
-
-                    // 2. 歌词模糊关键词重叠匹配 (应对用户少记/漏记一两个字，如“还记得家是唯一的城堡” vs “还记得你说家是唯一的城堡”)
-                    if (query.length() >= 4) {
-                        QString sub1 = query.left(query.length() / 2);
-                        QString sub2 = query.right(query.length() - query.length() / 2);
-                        if (line.contains(sub1, Qt::CaseInsensitive) && line.contains(sub2, Qt::CaseInsensitive)) {
-                            if (score < 80) score = 80;
-                            matchedLyric = line;
-                            break;
-                        }
-
-                        int hitCount = 0;
-                        int totalWindows = 0;
-                        for (int s = 0; s <= query.length() - 3; s += 2) {
-                            totalWindows++;
-                            if (line.contains(query.mid(s, 3), Qt::CaseInsensitive)) {
-                                hitCount++;
-                            }
-                        }
-                        if (hitCount >= 2 && hitCount * 2 >= totalWindows) {
-                            if (score < 75) score = 75;
-                            matchedLyric = line;
-                            break;
-                        }
-                    }
-                }
-                lrcFile.close();
+        if (artistSpecified) {
+            QString tArt = t.artist.trimmed();
+            if (tArt.compare(artist, Qt::CaseInsensitive) == 0) {
+                artistScore = 50;
+                artistMatched = true;
+            } else if (tArt.contains(artist, Qt::CaseInsensitive) || artist.contains(tArt, Qt::CaseInsensitive)) {
+                artistScore = 40;
+                artistMatched = true;
+            } else {
+                // 用户明确指定了歌手，但本地曲目歌手完全不符：直接剔除，严禁跨歌手误播！
+                continue;
             }
         }
 
-        if (score > 0) {
-            matches.append({i, t, score, isFav, matchedLyric});
+        int titleScore = 0;
+        QString matchedLyric;
+
+        // 2. 歌名匹配度计算
+        if (!query.isEmpty() && query != "*") {
+            if (t.title.compare(query, Qt::CaseInsensitive) == 0) {
+                titleScore = 100;
+            } else if (t.title.contains(query, Qt::CaseInsensitive)) {
+                if (query.length() >= 3) {
+                    titleScore = 60;
+                } else if (query.length() == 2) {
+                    titleScore = 45;
+                } else {
+                    // 单字 query（如“谁”、“晴”），长歌名仅包含该字不算高匹配
+                    titleScore = (t.title.length() == 1) ? 100 : 15;
+                }
+            } else if (t.album.contains(query, Qt::CaseInsensitive)) {
+                titleScore = 25;
+            }
+
+            // 尝试从同名 .lrc 文件中检索歌词内容
+            if (query.length() >= 2 && titleScore < 85) {
+                QString lrcPath = QFileInfo(t.filePath).absolutePath() + "/" + QFileInfo(t.filePath).completeBaseName() + ".lrc";
+                QFile lrcFile(lrcPath);
+                if (lrcFile.exists() && lrcFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    QTextStream in(&lrcFile);
+                    static const QRegularExpression timeTagRegex(R"(\[\d{1,2}:\d{2}(?:\.\d{1,3})?\])");
+                    while (!in.atEnd()) {
+                        QString line = in.readLine().trimmed();
+                        line.remove(timeTagRegex);
+                        line = line.trimmed();
+                        if (line.isEmpty()) continue;
+
+                        // 歌词完整包含 query
+                        if (line.contains(query, Qt::CaseInsensitive)) {
+                            if (titleScore < 85) titleScore = 85;
+                            matchedLyric = line;
+                            break;
+                        }
+                    }
+                    lrcFile.close();
+                }
+            }
+        } else if (artistMatched) {
+            // 用户只指定了歌手（例如“播放周杰伦的歌”），歌手匹配即有基础分
+            titleScore = 50;
+        }
+
+        int finalScore = titleScore + artistScore;
+        // 门槛保护：只有评分达到 30 分以上的条目才算有效命中
+        if (finalScore >= 30) {
+            matches.append({i, t, finalScore, isFav, matchedLyric});
         }
     }
 

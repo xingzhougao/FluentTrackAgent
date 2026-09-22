@@ -181,11 +181,11 @@ class SearchAndPlayWorkflow(BaseWorkflow):
         search_keyword = clean_query or artist
         logger.info(f"[SearchAndPlayWorkflow] 检索本地曲库: query='{clean_query}', artist='{artist}'")
 
-        # 2. 调用 Qt 端 search_local_music 原子工具
+        # 2. 调用 Qt 端 search_local_music 原子工具（透传 query 与 artist）
         search_reply = await self.runtime.call_client_tool(
             session_id=session_id,
             tool_name="search_local_music",
-            arguments={"query": search_keyword, "limit": 10},
+            arguments={"query": clean_query, "artist": artist, "limit": 10},
             timeout=4.0
         )
 
@@ -194,8 +194,37 @@ class SearchAndPlayWorkflow(BaseWorkflow):
         res_data = search_reply.get("result", {})
         tracks = res_data.get("tracks", [])
 
-        if not success or not tracks:
-            logger.info(f"[SearchAndPlayWorkflow] 本地未检索到曲目: '{search_keyword}'，自动流转至网络多源发现工作流")
+        # 3. 严格选定目标歌曲（杜绝跨歌手误播与短关键词误命中）
+        target_track = None
+        if success and tracks:
+            if artist:
+                # 用户明确指定了歌手，必须严格匹配该歌手
+                req_art = artist.strip().lower()
+                for t in tracks:
+                    t_art = t.get("artist", "").strip().lower()
+                    if req_art in t_art or t_art in req_art:
+                        t_title = t.get("title", "").strip().lower()
+                        q_lower = clean_query.strip().lower()
+                        if not q_lower or q_lower == t_title or q_lower in t_title or t_title in q_lower:
+                            target_track = t
+                            break
+                if not target_track:
+                    logger.info(f"[SearchAndPlayWorkflow] 本地未检索到歌手 '{artist}' 的曲目 '{clean_query}'，自动流转至网络多源发现")
+            else:
+                # 未指定歌手时，若歌名是超短词（<=2字符），必须严格匹配歌名，严禁长歌名单字命中
+                first_t = tracks[0]
+                first_title = first_t.get("title", "").strip().lower()
+                q_lower = clean_query.strip().lower()
+                if len(q_lower) <= 2:
+                    if q_lower == first_title or first_title.startswith(q_lower):
+                        target_track = first_t
+                    else:
+                        logger.info(f"[SearchAndPlayWorkflow] 歌名 '{clean_query}' 与本地首选 '{first_title}' 非精确对齐，流转至网络搜索")
+                else:
+                    target_track = first_t
+
+        if not target_track:
+            logger.info(f"[SearchAndPlayWorkflow] 本地未精确命中目标曲目: query='{clean_query}', artist='{artist}'，自动流转至网络多源发现工作流")
             if hasattr(self.runtime, "network_discovery_workflow") and self.runtime.network_discovery_workflow:
                 return await self.runtime.network_discovery_workflow.execute(
                     session_id=session_id,
@@ -216,15 +245,6 @@ class SearchAndPlayWorkflow(BaseWorkflow):
             }
             ans = f"在本地音乐库中暂未找到「{search_keyword}」相关的歌曲 😥"
             return WorkflowOutput(answer_text=ans, tools=[tool_card], success=False)
-
-        # 3. 选定目标歌曲
-        target_track = tracks[0]
-        # 如果指定了歌手，优先在结果中过滤出该歌手的作品
-        if artist:
-            for t in tracks:
-                if artist.lower() in t.get("artist", "").lower():
-                    target_track = t
-                    break
 
         target_idx = target_track.get("index", -1)
         target_title = target_track.get("title", clean_query)

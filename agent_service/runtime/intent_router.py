@@ -105,28 +105,62 @@ MIDDLE_MODIFIERS.sort(key=len, reverse=True)
 
 NOT_SONG_NAMES = {"音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"}
 
+CORRECTION_PREFIX_PATTERNS = [
+    re.compile(r"^(?:不是啊?|不对啊?|不对|不是|错了啊?|给错了啊?|放错了啊?|搞错了啊?|弄错了啊?|不是这首啊?|不要这首啊?|换一首啊?)[,，!！\s]*", re.IGNORECASE),
+    re.compile(r"^(?:你给错了啊?|你放错了啊?|你弄错了啊?|你搞错了啊?|你找错了啊?|给错了|放错了|弄错了|搞错了)[,，!！\s]*", re.IGNORECASE),
+    re.compile(r"^(?:我说的是|我是说|我要的是|我想听的是|我叫你放的是|我让你放的是|叫你放|让你放|叫你搜|让你搜)[,，!！\s]*", re.IGNORECASE),
+    re.compile(r"^(?:哎呀|哎|啊|喂|是|必须是|快给我|给我)[,，!！\s]*", re.IGNORECASE),
+]
+
+DIRECTIVE_SUFFIX_PATTERNS = [
+    re.compile(r"[,，!！\s]*(?:你要去搜索本地没有|你去搜索本地没有|去搜索本地没有|你要去搜索|你去搜索|本地没有你要去搜索|去网上搜吧?|去网络搜索吧?|去网上搜一下|去网络搜一下|全网搜索吧?|去网上找找|去网上找吧?|去搜吧?|去下载吧?|去下吧?|快去搜|快去下载)$", re.IGNORECASE),
+    re.compile(r"[,，!！\s]*(?:本地没有啊?|本地搜不到啊?|曲库没有啊?|曲库搜不到啊?|本地没这歌|本地没这首|没这首|没有这首|没有这歌|本地没有这个|没有这首歌)$", re.IGNORECASE),
+    re.compile(r"[,，!！\s]*(?:网上有|网络上有|网上能搜到|全网有|你去搜|你去搜搜|你搜搜看|你去查查)$", re.IGNORECASE),
+]
+
+INVALID_ARTIST_SUBSTRINGS = ["不是", "错", "给", "没有", "搜索", "本地", "刚才", "刚刚", "推荐", "喜欢", "怎么", "什么", "为什么", "歌曲", "音乐", "去搜", "曲库"]
+
+
+def is_valid_artist_name(name: str) -> bool:
+    """校验提取出的歌手名是否合法真实，杜绝把对话吐槽误当歌手"""
+    if not name or len(name) > 10:
+        return False
+    if any(ch in name for ch in "，,。！？!?；;:：\n"):
+        return False
+    if any(sub in name for sub in INVALID_ARTIST_SUBSTRINGS):
+        return False
+    return True
+
 
 def clean_song_title(raw: str) -> str:
-    """循环剥离所有前置修饰语、量词与定语"""
+    """循环剥离所有前置修饰语、量词、定语与尾部指令"""
     text = raw.strip().strip('《》"\'“”：: ')
+    for pat in DIRECTIVE_SUFFIX_PATTERNS:
+        text = pat.sub("", text).strip()
     while True:
         stripped = MODIFIERS_PATTERN.sub("", text).strip()
         stripped = stripped.strip('《》"\'“”：: ')
         if stripped == text:
             break
         text = stripped
+    for pat in DIRECTIVE_SUFFIX_PATTERNS:
+        text = pat.sub("", text).strip()
     return text
 
 
 def clean_artist_name(raw: str) -> str:
     """清理歌手名前缀与后置修饰语（如 '张杰唱的' -> '张杰', '周杰伦最火' -> '周杰伦', '林俊杰2008年出' -> '林俊杰'）"""
     text = raw.strip().strip('《》"\'“”：: ')
+    for pat in CORRECTION_PREFIX_PATTERNS:
+        text = pat.sub("", text).strip()
     while True:
         stripped = ARTIST_CLEANER_PATTERN.sub("", text).strip()
         stripped = stripped.strip('《》"\'“”：: ')
         if stripped == text:
             break
         text = stripped
+    for pat in CORRECTION_PREFIX_PATTERNS:
+        text = pat.sub("", text).strip()
     return text
 
 
@@ -140,10 +174,32 @@ def is_pure_modifier(text: str) -> bool:
 def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
     """
     智能自然语言音乐实体抽取器：支持全场景口语化句式提取
-    能够将各类修饰语（代表作、最火、经典、当年、唱的、主题曲等）彻底剥离，
+    能够将各类修饰语（代表作、最火、经典、当年、唱的、主题曲等）及口语纠错/吐槽彻底剥离，
     精确输出干净的 (artist, song)。
     """
     clean = text.strip()
+
+    # 循环清洗口语纠错、吐槽、否定前缀 (如“不是啊 你给错了啊 是廖俊涛的歌曲谁” -> “廖俊涛的歌曲谁”)
+    while True:
+        changed = False
+        for pat in CORRECTION_PREFIX_PATTERNS:
+            new_t = pat.sub("", clean).strip()
+            if new_t != clean and new_t:
+                clean = new_t
+                changed = True
+        if not changed:
+            break
+
+    # 循环清洗尾部指令与抱怨 (如“你要去搜索本地没有”)
+    while True:
+        changed = False
+        for pat in DIRECTIVE_SUFFIX_PATTERNS:
+            new_t = pat.sub("", clean).strip()
+            if new_t != clean and new_t:
+                clean = new_t
+                changed = True
+        if not changed:
+            break
 
     # 1. 匹配标准指令前缀并去除
     cmd_prefix = re.compile(
@@ -170,9 +226,14 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
             song = clean_song_title(rest)
         else:
             # 第一段是歌手（或歌手+修饰，如 '周杰伦最火' -> '周杰伦', '张杰' -> '张杰'）
-            art = clean_artist_name(parts[0])
-            rest = "的".join(parts[1:])
-            song = clean_song_title(rest)
+            raw_art = clean_artist_name(parts[0])
+            if is_valid_artist_name(raw_art):
+                art = raw_art
+                rest = "的".join(parts[1:])
+                song = clean_song_title(rest)
+            else:
+                art = ""
+                song = clean_song_title(body)
 
     # 句型 2: 中间包含明显的特征修饰词（如“王菲经典老歌红豆”, “周杰伦主打歌晴天”）
     else:
@@ -184,7 +245,7 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
                 right = body[idx + len(mod):].strip()
                 left_art = clean_artist_name(left)
                 right_song = clean_song_title(right)
-                if left_art and right_song and len(left_art) in [2, 3, 4, 5, 6] and not is_pure_modifier(left_art):
+                if left_art and right_song and is_valid_artist_name(left_art) and not is_pure_modifier(left_art):
                     art = left_art
                     song = right_song
                     found_mod = True
@@ -195,8 +256,9 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
             if "《" in body and "》" in body:
                 m = re.search(r"^(.*?)\s*《(.*?)》", body)
                 if m:
-                    art = clean_artist_name(m.group(1))
-                    song = m.group(2).strip()
+                    raw_a = clean_artist_name(m.group(1))
+                    art = raw_a if is_valid_artist_name(raw_a) else ""
+                    song = clean_song_title(m.group(2).strip())
                 else:
                     song = clean_song_title(body)
             # 句型 4: 空格分隔（例如：“周杰伦 晴天”）
@@ -204,7 +266,7 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
                 parts = body.split(None, 1)
                 p0 = clean_artist_name(parts[0])
                 p1 = clean_song_title(parts[1])
-                if len(p0) in [2, 3, 4] and p1 and p1 not in NOT_SONG_NAMES and not is_pure_modifier(p0):
+                if is_valid_artist_name(p0) and p1 and p1 not in NOT_SONG_NAMES and not is_pure_modifier(p0):
                     art = p0
                     song = p1
                 else:

@@ -107,8 +107,12 @@ class MusicProviderManager:
 
             # 计算三大梯队基准分 (Tier Base)
             if cand.provider == "soulseek_p2p" and artist_is_matched and not is_remix:
-                tier_base = 4000  # 第一级: Soulseek P2P 原版匹配 (绝对优先)
+                tier_base = 4200  # 第一级: Soulseek P2P 原版匹配 (绝对优先)
                 tier_name = "Soulseek 原版"
+                tier_num = 1
+            elif (not is_netdisk) and artist_is_matched and not is_remix:
+                tier_base = 4000  # 第一级: 下歌吧/官方直接原版高保真音频 (紧随其后)
+                tier_name = "官方原版音频"
                 tier_num = 1
             elif cand.provider == "soulseek_p2p" or (not is_netdisk and (not artist_is_matched or is_cover or is_remix)):
                 tier_base = 3000  # 第二级: 歌名匹配 但作者不匹配 (直接音频/翻唱)
