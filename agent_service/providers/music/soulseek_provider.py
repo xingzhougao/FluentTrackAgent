@@ -253,11 +253,60 @@ class SoulseekMusicProvider(BaseMusicProvider):
                             continue
                         seen_filenames.add(fn)
 
-                        clean_title = clean_q or os.path.splitext(os.path.basename(fn))[0]
-                        clean_artist_str = clean_art or p["username"]
-                        ext = p["ext"]
+                        fn_base = os.path.basename(fn)
+                        fn_lower = fn_base.lower()
 
-                        conf = 0.98 if ext in [".flac", ".wav"] else 0.92
+                        # 识别版本特征标签与是否属于翻唱/DJ混音
+                        is_remix = any(k in fn_lower for k in ["remix", "rmx", "electro", "manyao", "慢摇", "串烧", "dj", "club mix", "热血版"])
+                        is_cover = any(k in fn_lower for k in ["cover", "翻唱", "翻自", "原唱：", "原唱:"])
+                        is_inst = any(k in fn_lower for k in ["伴奏", "inst", "instrumental", "karaoke"])
+                        is_live = any(k in fn_lower for k in ["live", "现场版", "演唱会"])
+
+                        if is_remix:
+                            version_tag = "DJ混音"
+                        elif is_cover:
+                            version_tag = "翻唱版"
+                        elif is_inst:
+                            version_tag = "伴奏"
+                        elif is_live:
+                            version_tag = "现场版"
+                        elif ext in [".flac", ".wav"]:
+                            version_tag = "原版无损"
+                        else:
+                            version_tag = "原版音频"
+
+                        # 真实歌手与标题提取 (避免翻唱者或串烧制作者被强行标记为目标歌手原唱)
+                        clean_title = clean_q or os.path.splitext(fn_base)[0]
+                        clean_artist_str = clean_art
+
+                        # 检查目标歌手是否真实出现在路径或文件名中
+                        art_in_file = False
+                        if clean_art:
+                            art_simp = clean_art.lower()
+                            art_trad = to_traditional(clean_art).lower()
+                            if art_simp in fn_lower or art_trad in fn_lower or art_simp in fn.lower():
+                                art_in_file = True
+
+                        if not art_in_file and clean_art:
+                            # 文件名中并非目标歌手 (例如: 刘大壮 - 一吻天荒)
+                            # 尝试解析真实歌手
+                            base_no_ext = os.path.splitext(fn_base)[0]
+                            if " - " in base_no_ext:
+                                parts = base_no_ext.split(" - ", 1)
+                                parsed_artist = re.sub(r'^\d+[\s\-_]*', '', parts[0]).strip()
+                                clean_artist_str = parsed_artist or clean_art
+                            else:
+                                clean_artist_str = f"翻唱/未知歌手"
+
+                        # 评分机制：原版无损最高，翻唱与慢摇降权
+                        if is_remix:
+                            conf = 0.50
+                        elif is_cover or (not art_in_file and clean_art):
+                            conf = 0.60
+                        elif ext in [".flac", ".wav"]:
+                            conf = 0.98
+                        else:
+                            conf = 0.92
 
                         results.append(TrackCandidate(
                             id=f"slsk_{uuid.uuid4().hex[:8]}",
@@ -277,6 +326,9 @@ class SoulseekMusicProvider(BaseMusicProvider):
                                 "username": p["username"],
                                 "remote_filename": fn,
                                 "size": p["size"],
+                                "version_tag": version_tag,
+                                "is_remix": is_remix,
+                                "is_cover": is_cover,
                                 "peers": peer_candidates  # 附带所有 Peer 列表供自动容灾切换
                             }
                         ))

@@ -39,7 +39,7 @@ class MusicProviderManager:
         self,
         query: str,
         artist: str = "",
-        limit: int = 10,
+        limit: int = 5,
         timeout: float = 30.0
     ) -> List[TrackCandidate]:
         """
@@ -62,26 +62,40 @@ class MusicProviderManager:
             elif isinstance(res, Exception):
                 logger.warning(f"[MusicProviderManager] Provider 检索执行报错: {res}")
 
-        # 归一化去重（基于 title + artist）
-        # 优先级权重表：Soulseek P2P 与下歌吧作为主力，支持直接传输/下载的音源优先展示
+        # 优先级权重表：严格优先 Soulseek P2P 与下歌吧 (刘明野)，作为免费高保真主力
         provider_weight = {
-            "soulseek_p2p": 1.35,
-            "xiageba": 1.25,
-            "web_music": 0.85
+            "soulseek_p2p": 1.60,
+            "xiageba": 1.45,
+            "web_music": 0.80
         }
+
+        user_wants_remix = any(k in query.lower() for k in ["remix", "dj", "慢摇", "串烧"])
+        user_wants_cover = any(k in query.lower() for k in ["cover", "翻唱"])
 
         deduped: Dict[str, TrackCandidate] = {}
         for cand in raw_candidates:
-            # 相同 Provider 内按歌名与歌手去重，跨 Provider 保留候选以供无缝降级与备用
-            norm_key = f"{cand.provider}__{cand.title.strip().lower()}__{cand.artist.strip().lower()}"
+            v_tag = (cand.extra or {}).get("version_tag", "")
+            is_remix = (cand.extra or {}).get("is_remix", False)
+            is_cover = (cand.extra or {}).get("is_cover", False)
+            is_netdisk = (cand.extra or {}).get("is_netdisk", False)
+
             weight = provider_weight.get(cand.provider, 1.0)
-            if cand.extra and cand.extra.get("is_netdisk"):
-                weight *= 0.75  # 网盘需手动提取，权重适度下调，优先让位可直接入库的 P2P/直链
+            if is_netdisk:
+                weight *= 0.90  # 网盘高品质无损仅轻微折减，依然优先于普通网络翻唱
+
+            # 若用户未明确要求搜 DJ 慢摇，对串烧和慢摇混音版进行强降权，避免挤占原版
+            if is_remix and not user_wants_remix:
+                weight *= 0.35
+            # 若用户未明确要求搜翻唱，对翻唱版进行适度降权
+            if is_cover and not user_wants_cover:
+                weight *= 0.60
 
             adjusted_score = cand.confidence * weight
 
+            # 区分不同音质或不同版本，保留真实多样性
+            norm_key = f"{cand.provider}__{cand.format}__{v_tag}__{cand.title.strip().lower()}__{cand.artist.strip().lower()}"
+
             if norm_key not in deduped:
-                # 记录临时加权分用于比对
                 cand._sort_key = (adjusted_score, cand.bitrate)
                 deduped[norm_key] = cand
             else:

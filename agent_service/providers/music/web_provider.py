@@ -137,6 +137,19 @@ class WebMusicProvider(BaseMusicProvider):
                                 if match_id:
                                     song_id = match_id.group(1)
 
+                                is_remix = any(k in t_l for k in ["remix", "rmx", "electro", "慢摇", "串烧", "dj", "热血版"])
+                                is_cover = any(k in t_l or k in a_l for k in ["cover", "翻唱", "翻自"])
+                                is_inst = any(k in t_l for k in ["伴奏", "inst", "instrumental"])
+
+                                if is_remix:
+                                    version_tag = "DJ混音"
+                                elif is_cover:
+                                    version_tag = "翻唱版"
+                                elif is_inst:
+                                    version_tag = "伴奏"
+                                else:
+                                    version_tag = "开放网络音频"
+
                                 results.append(TrackCandidate(
                                     id=f"web_{song_id or uuid.uuid4().hex[:8]}",
                                     title=t_str,
@@ -151,7 +164,12 @@ class WebMusicProvider(BaseMusicProvider):
                                     provider=self.name,
                                     source_type="web",
                                     confidence=score,
-                                    capabilities=self.capabilities.to_list()
+                                    capabilities=self.capabilities.to_list(),
+                                    extra={
+                                        "version_tag": version_tag,
+                                        "is_remix": is_remix,
+                                        "is_cover": is_cover
+                                    }
                                 ))
             except Exception as e:
                 logger.debug(f"[WebMusicProvider] 在线 API 检索异常或超时: {e}")

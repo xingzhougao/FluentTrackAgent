@@ -45,6 +45,7 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
     QML_FILES qml/agent/AgentToolCard.qml
     QML_FILES qml/agent/AgentThinkingIndicator.qml
     QML_FILES qml/agent/AgentConfirmDialog.qml
+    QML_FILES qml/agent/AgentTrackSelectionDialog.qml
     QML_FILES qml/agent/AgentInputBar.qml
     QML_FILES qml/agent/AgentSettingsDialog.qml
     SOURCES

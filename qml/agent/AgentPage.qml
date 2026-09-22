@@ -321,6 +321,11 @@ Item {
             root.pendingConfirmId = confirmId;
             confirmDialog.open(confirmId, title, message, details);
         }
+        function onCandidateSelectionRequired(confirmId, title, query, artist, candidates) {
+            console.log("[AgentPage] 收到多版本选歌请求: confirmId=" + confirmId + ", query=" + query + ", 数量=" + (candidates ? candidates.length : 0));
+            root.pendingConfirmId = confirmId;
+            trackSelectionDialog.open(confirmId, title, query, artist, candidates);
+        }
     }
 
     AgentConfirmDialog {
@@ -331,6 +336,18 @@ Item {
         }
         onRejected: function(cid) {
             console.log("[AgentPage] 用户取消了敏感操作: " + cid);
+            root.pendingConfirmId = "";
+        }
+    }
+
+    AgentTrackSelectionDialog {
+        id: trackSelectionDialog
+        onTrackSelected: function(cid, selectedCandidateId) {
+            console.log("[AgentPage] 用户选定了音源版本: " + selectedCandidateId);
+            root.pendingConfirmId = "";
+        }
+        onRejected: function(cid) {
+            console.log("[AgentPage] 用户取消了选歌: " + cid);
             root.pendingConfirmId = "";
         }
     }

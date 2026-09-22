@@ -170,6 +170,23 @@ class XiagebaProvider(BaseMusicProvider):
                                 # 网盘资源评分适当下调，优先让位给可直接下载/播放的直链或 P2P 音频
                                 score = min(score, 0.78)
 
+                    is_remix = any(k in t_lower for k in ["remix", "rmx", "electro", "慢摇", "串烧", "dj", "热血版"])
+                    is_cover = any(k in t_lower or k in a_lower for k in ["cover", "翻唱", "翻自"])
+                    is_inst = any(k in t_lower for k in ["伴奏", "inst", "instrumental"])
+
+                    if is_netdisk:
+                        version_tag = "网盘转存 (无损)" if has_flac else "网盘转存"
+                    elif is_remix:
+                        version_tag = "DJ混音"
+                    elif is_cover:
+                        version_tag = "翻唱版"
+                    elif is_inst:
+                        version_tag = "伴奏"
+                    elif has_flac:
+                        version_tag = "原版无损"
+                    else:
+                        version_tag = "原版音频"
+
                     candidate = TrackCandidate(
                         id=f"xiageba_{item_id}",
                         title=title,
@@ -187,6 +204,9 @@ class XiagebaProvider(BaseMusicProvider):
                         capabilities=self.capabilities.to_list(),
                         extra={
                             "is_netdisk": is_netdisk,
+                            "version_tag": version_tag,
+                            "is_remix": is_remix,
+                            "is_cover": is_cover,
                             "raw_downloads": downloads
                         }
                     )

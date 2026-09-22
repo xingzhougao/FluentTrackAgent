@@ -37,6 +37,9 @@ class SessionManager:
     def get_connection(self, session_id: str) -> Optional[WebSocket]:
         return self._active_connections.get(session_id)
 
+    def has_session(self, session_id: str) -> bool:
+        return session_id in self._active_connections
+
     async def send_json(self, session_id: str, data: dict) -> bool:
         ws = self.get_connection(session_id)
         if ws:

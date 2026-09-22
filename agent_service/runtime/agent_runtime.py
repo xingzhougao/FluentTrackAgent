@@ -154,6 +154,14 @@ class AgentRuntime:
             self.confirmation_manager.handle_response(confirm_id, confirmed)
             return
 
+        if msg_type == "candidate_selection_response":
+            confirm_id = message_data.get("confirm_id") or payload.get("confirm_id", "")
+            selected_id = payload.get("selected_id")
+            cancelled = payload.get("cancelled", False)
+            logger.info(f"[AgentRuntime] 收到客户端 candidate_selection_response: confirm_id={confirm_id}, selected_id={selected_id}, cancelled={cancelled}")
+            self.confirmation_manager.handle_candidate_selection_response(confirm_id, selected_id, cancelled)
+            return
+
         if msg_type == "user_message":
             user_text = payload.get("text", "").strip()
             if not user_text:

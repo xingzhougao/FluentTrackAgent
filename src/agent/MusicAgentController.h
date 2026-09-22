@@ -43,6 +43,7 @@ public slots:
     void updateLlmConfig(const QString &provider, const QString &baseUrl, const QString &apiKey, const QString &modelName, bool enableThinking = false);
     void reconnect();
     void respondConfirmation(const QString &confirmId, bool confirmed);
+    void respondCandidateSelection(const QString &confirmId, const QString &selectedId, bool cancelled);
 
 signals:
     void isConnectedChanged(bool connected);
@@ -51,6 +52,7 @@ signals:
     void currentModelChanged(const QString &model);
     void errorOccurred(const QString &error);
     void confirmationRequired(const QString &confirmId, const QString &title, const QString &message, const QString &details);
+    void candidateSelectionRequired(const QString &confirmId, const QString &title, const QString &query, const QString &artist, const QJsonArray &candidates);
 
 private slots:
     void onTransportConnected();

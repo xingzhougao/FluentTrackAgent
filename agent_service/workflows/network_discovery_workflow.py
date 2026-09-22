@@ -94,7 +94,7 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
         candidates = await self.runtime.provider_manager.search(
             query=clean_q,
             artist=clean_art,
-            limit=10,
+            limit=5,
             timeout=30.0
         )
 
@@ -112,25 +112,29 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
                 success=False
             )
 
-        # 优先在候选列表中查找非网盘资源 (即支持直接免登录流式下载或 P2P 传输的音源)
-        best_cand: TrackCandidate = candidates[0]
-        playable_cand = None
-        netdisk_cand = None
-        for cand in candidates:
-            c_url = cand.url or ""
-            is_nd = "pan.baidu.com" in c_url or "pan.quark.cn" in c_url or cand.extra.get("is_netdisk", False)
-            if not is_nd:
-                if not playable_cand:
-                    playable_cand = cand
-            else:
-                if not netdisk_cand:
-                    netdisk_cand = cand
+        # Step 3: 向用户弹窗呈现最接近的 5 条候选版本，由用户自主选择下载版本
+        selected_id = await self.runtime.confirmation_manager.request_candidate_selection(
+            session_id=session_id,
+            query=clean_q or clean_art,
+            artist=clean_art,
+            candidates=candidates[:5]
+        )
 
-        if playable_cand:
-            best_cand = playable_cand
-        elif netdisk_cand:
-            # 所有候选均为网盘资源，直接使用网盘候选触发浏览器打开流程
-            best_cand = netdisk_cand
+        if selected_id is None:
+            # 用户在弹窗中取消
+            logger.info(f"[NetworkDiscoveryWorkflow] 用户取消了选歌弹窗: {clean_q}")
+            return WorkflowOutput(
+                answer_text=f"已为你取消《{clean_q or clean_art}》的下载。若需要收听其他歌曲，随时吩咐我 🎵",
+                tools=[],
+                success=False
+            )
+
+        # 匹配用户选定的候选对象
+        best_cand: TrackCandidate = candidates[0]
+        for c in candidates:
+            if c.id == selected_id:
+                best_cand = c
+                break
 
         tool_cards: List[Dict[str, Any]] = []
 

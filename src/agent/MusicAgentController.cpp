@@ -248,6 +248,18 @@ void MusicAgentController::onTransportMessageReceived(const QJsonObject &message
         return;
     }
 
+    if (type == "candidate_selection_required") {
+        QString confirmId = message.value("confirm_id").toString();
+        QString title = payload.value("title").toString("选择要下载的音乐版本");
+        QString query = payload.value("query").toString();
+        QString artist = payload.value("artist").toString();
+        QJsonArray candidates = payload.value("candidates").toArray();
+
+        qInfo() << "[MusicAgentController] 收到候选版本多选弹窗请求:" << confirmId << "曲目:" << query << "候选数:" << candidates.size();
+        emit candidateSelectionRequired(confirmId, title, query, artist, candidates);
+        return;
+    }
+
     if (type == "error") {
         QString errorMsg = payload.value("message").toString();
         m_messageModel->appendSystemMessage(QString("【错误】%1").arg(errorMsg));
@@ -273,6 +285,27 @@ void MusicAgentController::respondConfirmation(const QString &confirmId, bool co
     reply["payload"] = payload;
 
     qInfo() << "[MusicAgentController] 回传人工确认响应:" << confirmId << "confirmed:" << confirmed;
+    m_transport->sendJson(reply);
+}
+
+void MusicAgentController::respondCandidateSelection(const QString &confirmId, const QString &selectedId, bool cancelled)
+{
+    if (!m_transport || !m_transport->isConnected()) {
+        qWarning() << "[MusicAgentController] Transport 未连接，无法发送 candidate_selection_response";
+        return;
+    }
+
+    QJsonObject reply;
+    reply["type"] = "candidate_selection_response";
+    reply["confirm_id"] = confirmId;
+
+    QJsonObject payload;
+    payload["confirm_id"] = confirmId;
+    payload["selected_id"] = selectedId;
+    payload["cancelled"] = cancelled;
+    reply["payload"] = payload;
+
+    qInfo() << "[MusicAgentController] 回传候选版本选择响应:" << confirmId << "selectedId:" << selectedId << "cancelled:" << cancelled;
     m_transport->sendJson(reply);
 }
 
