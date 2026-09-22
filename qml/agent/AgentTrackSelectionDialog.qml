@@ -10,6 +10,9 @@ Item {
     property string queryText: ""
     property string artistText: ""
     property int selectedIndex: 0
+    property bool isSubmitted: false
+    property string submittedTitle: ""
+    property string submittedArtist: ""
 
     signal trackSelected(string cid, string selectedCandidateId)
     signal rejected(string cid)
@@ -28,6 +31,9 @@ Item {
         selectionDialogItem.queryText = q || "";
         selectionDialogItem.artistText = art || "";
         selectionDialogItem.selectedIndex = 0;
+        selectionDialogItem.isSubmitted = false;
+        selectionDialogItem.submittedTitle = "";
+        selectionDialogItem.submittedArtist = "";
 
         candidateModel.clear();
         if (candidates && candidates.length) {
@@ -54,13 +60,17 @@ Item {
 
     function close() {
         selectionDialogItem.visible = false;
+        selectionDialogItem.isSubmitted = false;
     }
 
     function confirmCurrentSelection() {
         if (selectedIndex >= 0 && selectedIndex < candidateModel.count) {
             var item = candidateModel.get(selectedIndex);
             var cid = selectionDialogItem.confirmId;
-            selectionDialogItem.close();
+            // 保持窗口显示，展示已提交状态，供用户通过“关闭窗口”按钮退出
+            selectionDialogItem.isSubmitted = true;
+            selectionDialogItem.submittedTitle = item.title;
+            selectionDialogItem.submittedArtist = item.artist;
             if (typeof agentController !== "undefined" && agentController && cid !== "") {
                 agentController.respondCandidateSelection(cid, item.cid, false);
             }
@@ -77,6 +87,7 @@ Item {
         }
         selectionDialogItem.rejected(cid);
         selectionDialogItem.confirmId = "";
+        selectionDialogItem.isSubmitted = false;
     }
 
     // 半透明背景遮罩
@@ -357,36 +368,39 @@ Item {
                 Layout.fillWidth: true
                 spacing: 12
 
+                // 提交后的成功/进度反馈
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    visible: selectionDialogItem.isSubmitted
+
+                    Text {
+                        text: "✅"
+                        font.pixelSize: 13
+                    }
+                    Text {
+                        text: "已提交下载《" + selectionDialogItem.submittedTitle + "》，后台正在入库收录中..."
+                        color: "#34d399"
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                }
+
+                // 未提交时的提示文本
                 Text {
-                    text: "💡 双击任意选项即可立即下载入库并播放"
+                    visible: !selectionDialogItem.isSubmitted
+                    text: "💡 点击选择目标版本，或双击立即下载开播"
                     color: "#64748b"
                     font.pixelSize: 11
                     Layout.fillWidth: true
                 }
 
-                Button {
-                    id: cancelBtn
-                    text: "取消"
-                    implicitWidth: 78
-                    implicitHeight: 32
-                    background: Rectangle {
-                        color: cancelBtn.hovered ? "#243548" : "#1a2636"
-                        border.color: "#2e4157"
-                        border.width: 1
-                        radius: 6
-                    }
-                    contentItem: Text {
-                        text: cancelBtn.text
-                        color: "#94a3b8"
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    onClicked: selectionDialogItem.cancelSelection()
-                }
-
+                // 下载并开播按钮 (未提交时显示)
                 Button {
                     id: confirmBtn
+                    visible: !selectionDialogItem.isSubmitted
                     property bool isNetdisk: selectionDialogItem.selectedIndex >= 0 &&
                                              selectionDialogItem.selectedIndex < candidateModel.count &&
                                              candidateModel.get(selectionDialogItem.selectedIndex).is_netdisk
@@ -407,6 +421,37 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: selectionDialogItem.confirmCurrentSelection()
+                }
+
+                // 关闭窗口按钮 (核心：用户点击才退出)
+                Button {
+                    id: closeWindowBtn
+                    text: "关闭窗口"
+                    implicitWidth: 96
+                    implicitHeight: 32
+                    background: Rectangle {
+                        color: closeWindowBtn.hovered ? 
+                               (selectionDialogItem.isSubmitted ? "#2563eb" : "#243548") : 
+                               (selectionDialogItem.isSubmitted ? "#1d4ed8" : "#1a2636")
+                        border.color: selectionDialogItem.isSubmitted ? "#3b82f6" : "#2e4157"
+                        border.width: 1
+                        radius: 6
+                    }
+                    contentItem: Text {
+                        text: closeWindowBtn.text
+                        color: selectionDialogItem.isSubmitted ? "#ffffff" : "#cbd5e1"
+                        font.pixelSize: 12
+                        font.weight: selectionDialogItem.isSubmitted ? Font.DemiBold : Font.Normal
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (selectionDialogItem.confirmId !== "") {
+                            selectionDialogItem.cancelSelection();
+                        } else {
+                            selectionDialogItem.close();
+                        }
+                    }
                 }
             }
         }

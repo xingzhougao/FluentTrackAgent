@@ -368,6 +368,11 @@ Item {
             root.pendingConfirmId = confirmId;
             trackSelectionDialog.open(confirmId, title, query, artist, candidates);
         }
+        function onNoSourceFound(message, query, artist) {
+            console.log("[AgentPage] 收到未找到音源通知: " + message + ", query=" + query);
+            noSourceDialog.dialogMessage = message || "抱歉暂时找不到对应音源哦";
+            noSourceDialog.visible = true;
+        }
     }
 
     AgentConfirmDialog {
@@ -391,6 +396,91 @@ Item {
         onRejected: function(cid) {
             console.log("[AgentPage] 用户取消了选歌: " + cid);
             root.pendingConfirmId = "";
+        }
+    }
+
+    // 未找到对应音源模态弹窗 (按用户要求：“抱歉暂时找不到对应音源哦”+单个“确认”按钮)
+    Rectangle {
+        id: noSourceDialog
+        visible: false
+        anchors.fill: parent
+        color: "#aa000000"
+        z: 1002
+
+        property string dialogMessage: "抱歉暂时找不到对应音源哦"
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {} // 拦截底层点击
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 48, 380)
+            height: 180
+            radius: 12
+            color: "#131c28"
+            border.color: "#2a3d54"
+            border.width: 1
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 20
+                spacing: 16
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 12
+
+                    Rectangle {
+                        Layout.preferredWidth: 38
+                        Layout.preferredHeight: 38
+                        radius: 19
+                        color: "#2e1e12"
+                        border.color: "#f59e0b"
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "🔍"
+                            font.pixelSize: 17
+                        }
+                    }
+
+                    Text {
+                        text: noSourceDialog.dialogMessage
+                        color: "#f8fafc"
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                Button {
+                    text: "确认"
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#2563eb" : "#1d4ed8"
+                        radius: 6
+                    }
+                    contentItem: Text {
+                        text: "确认"
+                        color: "#ffffff"
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        noSourceDialog.visible = false;
+                    }
+                }
+            }
         }
     }
 

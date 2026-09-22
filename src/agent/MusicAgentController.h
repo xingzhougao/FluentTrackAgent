@@ -57,6 +57,7 @@ signals:
     void errorOccurred(const QString &error);
     void confirmationRequired(const QString &confirmId, const QString &title, const QString &message, const QString &details);
     void candidateSelectionRequired(const QString &confirmId, const QString &title, const QString &query, const QString &artist, const QJsonArray &candidates);
+    void noSourceFound(const QString &message, const QString &query, const QString &artist);
 
 private slots:
     void onTransportConnected();

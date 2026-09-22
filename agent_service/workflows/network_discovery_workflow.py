@@ -99,15 +99,25 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
         )
 
         if not candidates:
+            # 向前端下发“未找到音源”模态弹窗通知 (触发客户端弹出“抱歉暂时找不到对应音源哦”+确认按钮)
+            await self.runtime.session_manager.send_json(session_id, {
+                "type": "no_source_found",
+                "payload": {
+                    "title": "未找到音源",
+                    "message": "抱歉暂时找不到对应音源哦",
+                    "query": clean_q,
+                    "artist": clean_art
+                }
+            })
             tool_card = {
                 "name": "网络音乐检索",
                 "action": "network_search",
                 "params": f"关键词: {clean_q} {clean_art}".strip(),
                 "status": "failed",
-                "result": "全网各 Provider 未检索到匹配资源"
+                "result": "三大主力梯队均未检索到匹配资源"
             }
             return WorkflowOutput(
-                answer_text=f"未能从网络上搜索到关于「{clean_q or clean_art}」的音乐资源，你可以换个歌名或歌手再试试看 🔎",
+                answer_text=f"抱歉暂时找不到对应音源哦。你可以换个歌名或歌手再试试看 🔎",
                 tools=[tool_card],
                 success=False
             )
@@ -324,12 +334,18 @@ class NetworkDiscoveryWorkflow(BaseWorkflow):
                 "result": "该曲目当前仅提供网盘转存或因商业版权限制暂无直接音频流"
             })
 
-            netdisk_hint = ""
-            if best_cand.url and ("pan.baidu.com" in best_cand.url or "pan.quark.cn" in best_cand.url):
-                netdisk_hint = f"\n\n🔗 下歌吧网盘资源地址：{best_cand.url}\n（该资源需网盘客户端转存下载）"
+            await self.runtime.session_manager.send_json(session_id, {
+                "type": "no_source_found",
+                "payload": {
+                    "title": "未找到音源",
+                    "message": "抱歉暂时找不到对应音源哦",
+                    "query": best_cand.title,
+                    "artist": best_cand.artist
+                }
+            })
 
             return WorkflowOutput(
-                answer_text=f"未能从公开网络直接下载《{best_cand.title}》音频流。{netdisk_hint}\n\n你可以开启本地 `slskd` P2P 共享服务以获取全量无损直下，或者吩咐我换一首歌曲试试看 ✨",
+                answer_text=f"未能从网络获取《{best_cand.title}》的有效音频流。{netdisk_hint}\n\n建议吩咐我换一首歌曲试试看 ✨",
                 tools=tool_cards,
                 success=False
             )

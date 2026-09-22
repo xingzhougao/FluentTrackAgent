@@ -23,13 +23,12 @@ class MusicProviderManager:
 
     def __init__(self):
         self.providers: Dict[str, BaseMusicProvider] = {}
-        # 依据 Step 5 规格说明书顺序注册核心 Provider：
+        # 依据用户指示：停用第四级其他网络源 (WebMusicProvider/Meting)，仅保留三大真实主力音源：
         # 1. 下歌吧 (免费商业与无损主力)
         # 2. Soulseek P2P (全球用户共享、无版权限制主力)
-        # 3. WebMusicProvider (开放网络备用与热门歌曲库)
         self.register_provider(XiagebaProvider())
         self.register_provider(SoulseekMusicProvider())
-        self.register_provider(WebMusicProvider())
+        # WebMusicProvider 已停用，杜绝低质网络噪音
 
     def register_provider(self, provider: BaseMusicProvider):
         """注册新 Provider"""
@@ -67,14 +66,20 @@ class MusicProviderManager:
             elif isinstance(res, Exception):
                 logger.warning(f"[MusicProviderManager] Provider 检索执行报错: {res}")
 
-        # 遵照用户核心指令制定四级优先级体系：
+        # 遵照用户核心指令制定三大主力优先级体系（彻底移除第四级其他网络噪音）：
         # 第一级 (Tier 1, 基准 4000分): Soulseek P2P 歌名与歌手均匹配的原版高保真音频
         # 第二级 (Tier 2, 基准 3000分): 歌名匹配但作者不匹配的可直接播放音频 (含翻唱/改编/其他歌手版本)
         # 第三级 (Tier 3, 基准 2000分): 网盘资源 (下歌吧夸克/百度网盘转存，需扫码保底)
-        # 第四级 (Tier 4, 基准 1000分): 其他网络检索源
 
         user_wants_remix = any(k in query.lower() for k in ["remix", "dj", "慢摇", "串烧"])
         user_wants_cover = any(k in query.lower() for k in ["cover", "翻唱"])
+
+        trad_query = ""
+        try:
+            from utils.chinese_converter import to_traditional
+            trad_query = to_traditional(query)
+        except Exception:
+            pass
 
         deduped: Dict[str, TrackCandidate] = {}
         for cand in raw_candidates:
@@ -83,6 +88,13 @@ class MusicProviderManager:
             is_cover = (cand.extra or {}).get("is_cover", False)
             is_netdisk = (cand.extra or {}).get("is_netdisk", False)
             art_matches = (cand.extra or {}).get("artist_matches", True)
+
+            # 严格标题校验：曲目标题必须包含搜索关键词 (简繁任一包含)，彻底杜绝无关杂质
+            cand_title_l = cand.title.lower()
+            q_l = query.strip().lower()
+            trad_q_l = trad_query.strip().lower()
+            if q_l and (q_l not in cand_title_l and (not trad_q_l or trad_q_l not in cand_title_l)):
+                continue
 
             # 判断歌手是否匹配 (若用户未指定歌手，则默认匹配)
             if artist.strip():
@@ -93,25 +105,22 @@ class MusicProviderManager:
             else:
                 artist_is_matched = True
 
-            # 计算分级基准分 (Tier Base)
-            if is_netdisk:
+            # 计算三大梯队基准分 (Tier Base)
+            if cand.provider == "soulseek_p2p" and artist_is_matched and not is_remix:
+                tier_base = 4000  # 第一级: Soulseek P2P 原版匹配 (绝对优先)
+                tier_name = "Soulseek 原版"
+                tier_num = 1
+            elif cand.provider == "soulseek_p2p" or (not is_netdisk and (not artist_is_matched or is_cover or is_remix)):
+                tier_base = 3000  # 第二级: 歌名匹配 但作者不匹配 (直接音频/翻唱)
+                tier_name = "歌名匹配但歌手不同"
+                tier_num = 2
+            elif is_netdisk:
                 tier_base = 2000  # 第三级: 网盘资源 (需扫码保底)
                 tier_name = "网盘资源"
-            elif cand.provider == "soulseek_p2p" and artist_is_matched and not is_remix:
-                tier_base = 4000  # 第一级: Soulseek P2P 原版匹配
-                tier_name = "Soulseek 原版"
-            elif cand.provider == "web_music" and artist_is_matched and not is_remix and not is_cover:
-                tier_base = 3500  # 开放网络直接可播放原版音频 (紧随第一级，优于翻唱与网盘)
-                tier_name = "网络直链原版"
-            elif not artist_is_matched or is_cover or is_remix:
-                tier_base = 3000  # 第二级: 歌名匹配 但作者不匹配 (直接音频)
-                tier_name = "歌名匹配但歌手不同"
-            elif cand.provider == "soulseek_p2p":
-                tier_base = 3000  # Soulseek 上的翻唱/混音直接音频归入第二级
-                tier_name = "歌名匹配但歌手不同"
+                tier_num = 3
             else:
-                tier_base = 1000  # 第四级: 其他网络
-                tier_name = "其他网络"
+                # 任何不属于三大梯队的内容直接丢弃，不予展示
+                continue
 
             # 阶梯内部微调：
             # 1. 置信度打分 (cand.confidence * 80)
@@ -131,6 +140,7 @@ class MusicProviderManager:
             if not cand.extra:
                 cand.extra = {}
             cand.extra["tier_name"] = tier_name
+            cand.extra["tier"] = tier_num
 
             # 区分不同音质或不同版本，保留真实多样性
             norm_key = f"{cand.provider}__{cand.format}__{v_tag}__{cand.title.strip().lower()}__{cand.artist.strip().lower()}"

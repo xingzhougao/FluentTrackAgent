@@ -296,6 +296,17 @@ void MusicAgentController::onTransportMessageReceived(const QJsonObject &message
         return;
     }
 
+    if (type == "no_source_found") {
+        QString title = payload.value("title").toString("未找到音源");
+        QString msg = payload.value("message").toString("抱歉暂时找不到对应音源哦");
+        QString query = payload.value("query").toString();
+        QString artist = payload.value("artist").toString();
+
+        qInfo() << "[MusicAgentController] 收到未找到对应音源通知:" << query << artist << msg;
+        emit noSourceFound(msg, query, artist);
+        return;
+    }
+
     if (type == "error") {
         QString errorMsg = payload.value("message").toString();
         m_messageModel->appendSystemMessage(QString("【错误】%1").arg(errorMsg));
