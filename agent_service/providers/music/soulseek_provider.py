@@ -232,6 +232,16 @@ class SoulseekMusicProvider(BaseMusicProvider):
                         except Exception as ex:
                             logger.debug(f"[SoulseekProvider] 获取 responses 异常: {ex}")
 
+                # 检索响应获取完毕，异步清理本次 slskd 临时 search 记录，避免服务堆积与内存拥堵
+                for sid in search_ids:
+                    try:
+                        await client.delete(
+                            f"{self.api_base_url}/searches/{sid}",
+                            headers=self._get_headers()
+                        )
+                    except Exception:
+                        pass
+
                 # 汇聚所有匹配的候选文件，并记录 Peer 列表
                 peer_candidates: List[Dict[str, Any]] = []
                 for resp in all_responses:
