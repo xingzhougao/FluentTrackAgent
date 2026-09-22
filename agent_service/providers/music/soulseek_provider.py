@@ -179,8 +179,8 @@ class SoulseekMusicProvider(BaseMusicProvider):
                     # 若已全部完成，直接退出并取回结果
                     if all_done:
                         break
-                    # 若已轮询超过 12 秒且已获取到多个 Peer 响应，提前退出以加快响应速度
-                    if elapsed_poll >= 12.0:
+                    # 若已轮询超过 14 秒且已实际获取到匹配的音频文件，提前退出以加快响应速度
+                    if elapsed_poll >= 14.0:
                         cur_resps = []
                         for sid in search_ids:
                             try:
@@ -189,10 +189,29 @@ class SoulseekMusicProvider(BaseMusicProvider):
                                     headers=self._get_headers()
                                 )
                                 if r_l.status_code == 200 and r_l.json():
-                                    cur_resps.extend(r_l.json())
+                                    data = r_l.json()
+                                    if isinstance(data, list):
+                                        cur_resps.extend(data)
+                                    elif isinstance(data, dict) and data.get("responses"):
+                                        cur_resps.extend(data.get("responses"))
                             except Exception:
                                 pass
-                        if len(cur_resps) >= 2:
+
+                        # 检查 cur_resps 中是否已包含真正匹配目标歌名的音频文件
+                        has_matched_file = False
+                        q_s = clean_q.lower()
+                        q_t = trad_q.lower()
+                        for r in cur_resps:
+                            for f in r.get("files", []):
+                                fn = f.get("filename", "").lower()
+                                ext = os.path.splitext(fn)[1]
+                                if ext in [".mp3", ".flac", ".m4a", ".wav"] and ((clean_q and q_s in fn) or (trad_q and q_t in fn)):
+                                    has_matched_file = True
+                                    break
+                            if has_matched_file:
+                                break
+
+                        if has_matched_file:
                             all_responses = cur_resps
                             break
 

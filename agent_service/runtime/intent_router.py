@@ -306,22 +306,44 @@ class IntentRouter:
         # 排除纯控制词汇
         not_song_names = ["音乐", "歌曲", "歌", "声音", "音量", "伴奏", "下一首", "上一首"]
 
-        # 匹配歌手点歌，例如 “放一首周杰伦的歌” / “放周杰伦的歌” / “来首陈奕迅的歌”
-        # 匹配歌手点歌，例如 “放一首周杰伦的歌” / “放周杰伦的歌” / “来首陈奕迅的歌”
+        # 1. 匹配歌手专有句式与带“的歌/的歌曲”的句式：
+        # 例如：
+        # - “放一首周杰伦的歌” / “播放周杰伦的歌曲” (纯歌手点歌，query="")
+        # - “帮我播放一下 马天宇的歌曲 该死的温柔” / “播放周杰伦的歌曲晴天” / “放一首陈奕迅的歌 孤勇者” (歌手+歌名组合)
         artist_song_match = re.search(
-            r"(?:给我播放一下|给我放一下|我想听一下|播放一下|放一下|听一下|来一下|播一下|给我播放|给我放|我想听|播放|放一首|来一首|听一首|放|听|播|来首)\s*([^\s，,。！？的]+)的(?:歌|歌曲)",
+            r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
+            r"(?:播放|放|听|播|来|搜|找)\s*"
+            r"(?:一下|一首|首|个|点|曲)?\s*"
+            r"([^\s，,。！？的]+)的(?:这首歌曲|这首歌|歌曲|音乐|曲目|歌)"
+            r"(?:\s*(?:叫|是|为)?\s*([^\r\n，,。！？]*))?$",
             clean
         )
         if artist_song_match:
-            art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", artist_song_match.group(1)).strip()
-            if art not in not_song_names:
-                return IntentResult(
-                    intent_type="SEARCH_AND_PLAY",
-                    action="search_and_play",
-                    params={"artist": art, "query": ""}
-                )
+            art = artist_song_match.group(1).strip()
+            art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", art).strip()
+            rest = (artist_song_match.group(2) or "").strip()
+            while True:
+                stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", rest).strip()
+                stripped = stripped.strip("《》\"'“”：: ")
+                if stripped == rest:
+                    break
+                rest = stripped
 
-        # 匹配精准与模糊点歌：例如 “帮我播放一下歌曲爱要怎么说出口”, “帮我播放一下 周杰伦的爱情废柴”, “播放歌曲冬眠”, “我想听晴天”
+            if art not in not_song_names:
+                if not rest or rest in not_song_names:
+                    return IntentResult(
+                        intent_type="SEARCH_AND_PLAY",
+                        action="search_and_play",
+                        params={"artist": art, "query": ""}
+                    )
+                else:
+                    return IntentResult(
+                        intent_type="SEARCH_AND_PLAY",
+                        action="search_and_play",
+                        params={"artist": art, "query": rest}
+                    )
+
+        # 2. 匹配通用点歌：例如 “帮我播放一下歌曲爱要怎么说出口”, “帮我播放一下 周杰伦的爱情废柴”, “播放歌曲冬眠”, “我想听晴天”
         play_match = re.search(
             r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
             r"(?:播放|放|听|播|来|搜|找)\s*"
@@ -335,6 +357,7 @@ class IntentRouter:
             song_candidate = raw_cand
             while True:
                 stripped = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", song_candidate).strip()
+                stripped = stripped.strip("《》\"'“”：: ")
                 if stripped == song_candidate:
                     break
                 song_candidate = stripped
@@ -345,6 +368,12 @@ class IntentRouter:
                     parts = song_candidate.split("的", 1)
                     parsed_art = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[0]).strip()
                     parsed_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parts[1]).strip()
+                    while True:
+                        stripped_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parsed_q).strip()
+                        stripped_q = stripped_q.strip("《》\"'“”：: ")
+                        if stripped_q == parsed_q:
+                            break
+                        parsed_q = stripped_q
                     if parsed_q and parsed_q not in not_song_names:
                         return IntentResult(
                             intent_type="SEARCH_AND_PLAY",
@@ -356,6 +385,12 @@ class IntentRouter:
                     if len(parts) == 2 and len(parts[0]) in [2, 3, 4] and len(parts[1]) >= 1:
                         parsed_art = parts[0].strip()
                         parsed_q = parts[1].strip()
+                        while True:
+                            stripped_q = re.sub(r"^(?:一下|一首|首|个|点|曲|歌曲|这首歌曲|这首歌|音乐|曲目|歌)\s*", "", parsed_q).strip()
+                            stripped_q = stripped_q.strip("《》\"'“”：: ")
+                            if stripped_q == parsed_q:
+                                break
+                            parsed_q = stripped_q
                         if parsed_q and parsed_q not in not_song_names:
                             return IntentResult(
                                 intent_type="SEARCH_AND_PLAY",

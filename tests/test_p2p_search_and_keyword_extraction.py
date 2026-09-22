@@ -31,6 +31,12 @@ async def test_all():
         ("帮我播放一下歌曲爱要怎么说出口", "SEARCH_AND_PLAY", "爱要怎么说出口", ""),
         ("帮我播放一下歌曲冬眠", "SEARCH_AND_PLAY", "冬眠", ""),
         ("播放歌曲晴天", "SEARCH_AND_PLAY", "晴天", ""),
+        ("帮我播放一下 马天宇的歌曲 该死的温柔", "SEARCH_AND_PLAY", "该死的温柔", "马天宇"),
+        ("帮我播放一下马天宇的该死的温柔", "SEARCH_AND_PLAY", "该死的温柔", "马天宇"),
+        ("播放周杰伦的歌曲 晴天", "SEARCH_AND_PLAY", "晴天", "周杰伦"),
+        ("放一首陈奕迅的歌 孤勇者", "SEARCH_AND_PLAY", "孤勇者", "陈奕迅"),
+        ("放一首周杰伦的歌", "SEARCH_AND_PLAY", "", "周杰伦"),
+        ("播放周杰伦的歌曲", "SEARCH_AND_PLAY", "", "周杰伦"),
         ("全网搜索周杰伦的夜曲并下载", "NETWORK_DISCOVERY", "夜曲", "周杰伦"),
         ("下载歌曲冬眠", "NETWORK_DISCOVERY", "冬眠", "")
     ]
