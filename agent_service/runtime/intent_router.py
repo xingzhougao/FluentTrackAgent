@@ -121,7 +121,8 @@ DIRECTIVE_SUFFIX_PATTERNS = [
 INVALID_ARTIST_SUBSTRINGS = [
     "不是", "错", "给", "没有", "搜索", "本地", "刚才", "刚刚", "推荐", "喜欢",
     "怎么", "什么", "为什么", "歌曲", "音乐", "去搜", "曲库", "上班", "下班",
-    "累", "一天", "加班", "睡觉", "吃饭", "今天", "明天", "昨天", "觉得", "认为"
+    "累", "一天", "加班", "睡觉", "吃饭", "今天", "明天", "昨天", "觉得", "认为",
+    "选", "挑", "做决定", "帮我", "帮选", "最推荐", "首选"
 ]
 
 INVALID_ARTIST_EXACT = {
@@ -131,7 +132,8 @@ INVALID_ARTIST_EXACT = {
     "你", "我", "他", "她", "它", "你们", "我们", "他们", "自己", "谁", "大家",
     "你猜", "我猜", "今天", "昨天", "明天", "现在", "刚才", "刚刚", "曾经", "以前",
     "你猜我", "你猜我今天", "这", "那", "这个", "那个", "心情", "心情如何",
-    "你好", "您好", "在吗", "哈喽", "谢谢", "再见"
+    "你好", "您好", "在吗", "哈喽", "谢谢", "再见",
+    "你帮我选", "你选", "帮我选", "选一首", "挑一首", "最推荐", "最好听"
 }
 
 KNOWN_TITLES_WITH_DE = {
@@ -452,7 +454,23 @@ class IntentRouter:
                     params={"query": lyrics_text, "lyrics_query": lyrics_text}
                 )
 
-        # 0.2 跨轮指代消歧（最高优先级拦截，防止被误判为常规播放或 resume）
+        # 0.2 跨轮决策点播与指代消歧（最高优先级拦截，防止被误判为常规播放、聊天或推荐咨询）
+        decision_keywords = [
+            "最推荐", "最好听", "最火", "最经典", "最好", "最喜欢",
+            "帮我选", "你选", "你挑", "帮我挑", "挑一首", "选一首", "选首", "挑首",
+            "你做决定", "你决定", "你觉得哪首好", "哪首好听就放哪首", "哪首最推荐",
+            "这四首歌中你最推荐", "这几首歌中你最推荐", "首选"
+        ]
+        has_decision_play_verb = any(v in lower for v in [
+            "播放", "放", "播", "听", "开播", "来一首", "放一首", "播一首", "选一首", "挑一首", "帮我选", "你选"
+        ])
+        if any(d in lower for d in decision_keywords) and has_decision_play_verb:
+            return IntentResult(
+                intent_type="SEARCH_AND_PLAY",
+                action="search_and_play",
+                params={"query": "", "is_context_referential": True, "is_decision": True}
+            )
+
         referential_phrases = [
             "你给我播放呀", "给我播放呀", "给我放呀", "怎么不放呀", "放呀", "播放啊",
             "播放刚刚说的歌", "播放刚刚说的", "播放刚才说的歌", "播放刚才说的",
@@ -461,6 +479,7 @@ class IntentRouter:
             "放这首歌", "播放它", "放它", "播放这首", "放这首", "放上面那首",
             "播放刚才那首", "放刚才那首", "播放刚才说的歌曲", "放刚刚说的歌曲",
             "刚才推荐的那首", "刚才推荐的", "刚刚推荐的", "刚才说的", "刚刚说的",
+            "放刚才推荐", "播放刚才推荐", "放推荐的",
             "你倒是放啊", "快放", "快播放", "播放呀"
         ]
         if any(p in lower for p in referential_phrases) or (
@@ -610,13 +629,19 @@ class IntentRouter:
         has_explicit_play_verb = any(v in clean_text for v in [
             "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
             "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
-            "放首", "播首", "听首", "整首", "来首", "下载", "缓存", "放歌", "听歌", "放点", "播点", "来点"
+            "放首", "播首", "听首", "整首", "来首", "下载", "缓存", "放歌", "听歌", "放点", "播点", "来点",
+            "放这首", "放它", "播放它", "放那首", "开播", "听这首"
+        ])
+        is_referential_or_decision = any(k in clean_text for k in [
+            "刚才推荐", "刚刚推荐", "之前推荐", "刚才说", "刚刚说", "之前说",
+            "最推荐", "最好听", "帮我选", "你选", "你挑", "帮我挑", "挑一首", "选一首",
+            "第一首", "第二首", "第三首", "第四首", "第五首", "最后一首"
         ])
         is_recommend_inquiry = any(w in clean_text for w in ["推荐", "有没有", "有啥", "有什么", "有哪些", "求推荐"])
         is_chat_trigger = any(trig in clean_text for trig in chat_conversational_triggers)
 
         # 推荐咨询或日常聊天，且没有显式指定书名号或“生成歌单”指令时，100% 走大模型伴侣聊天推荐
-        if (is_chat_trigger or is_recommend_inquiry) and not has_explicit_play_verb and "《" not in clean_text and "歌单" not in clean_text:
+        if (is_chat_trigger or is_recommend_inquiry) and not has_explicit_play_verb and not is_referential_or_decision and "《" not in clean_text and "歌单" not in clean_text:
             return IntentResult(intent_type="CHAT")
 
         effective_provider = llm_provider or kwargs.get("provider")
@@ -625,9 +650,12 @@ class IntentRouter:
             # 如果是上下文指代且传入了 context，立刻尝试预解析
             if rule_result.intent_type == "SEARCH_AND_PLAY" and rule_result.params.get("is_context_referential"):
                 if context_session:
-                    resolved = context_session.resolve_song_from_context(text)
-                    if resolved:
-                        rule_result.params["query"] = resolved
+                    resolved_track = context_session.resolve_track_from_context(text)
+                    if resolved_track:
+                        if resolved_track.get("title"):
+                            rule_result.params["query"] = resolved_track["title"]
+                        if resolved_track.get("artist"):
+                            rule_result.params["artist"] = resolved_track["artist"]
             logger.info(f"[IntentRouter] 命中确定性规则: {rule_result}")
             return rule_result
 

@@ -51,37 +51,44 @@ class SearchAndPlayWorkflow(BaseWorkflow):
 
             logger.info(f"[SearchAndPlayWorkflow] 按歌单序号第 {disp_num} 首点播: 《{target_title}》 (index={target_idx})")
 
-            call_args = {"playlist_index": disp_num - 1}
-            if target_idx >= 0:
-                call_args["index"] = target_idx
-            if target_path:
-                call_args["file_path"] = target_path
+            if target_idx >= 0 or target_path:
+                call_args = {}
+                if target_idx >= 0:
+                    call_args["index"] = target_idx
+                if target_path:
+                    call_args["file_path"] = target_path
 
-            play_reply = await self.runtime.call_client_tool(
-                session_id=session_id,
-                tool_name="play_local_track",
-                arguments=call_args,
-                timeout=4.0
-            )
+                play_reply = await self.runtime.call_client_tool(
+                    session_id=session_id,
+                    tool_name="play_local_track",
+                    arguments=call_args,
+                    timeout=4.0
+                )
 
-            if play_reply.get("success"):
-                res_info = play_reply.get("result", {})
-                if not target_title:
-                    target_title = res_info.get("title", f"第 {disp_num} 首")
-                if not target_artist:
-                    target_artist = res_info.get("artist", "")
-                if target_track:
-                    session_ctx.record_played_track(target_track)
-                art_disp = f" - {target_artist}" if target_artist else ""
-                tool_card = {
-                    "name": "歌单选曲",
-                    "action": "play_local_track",
-                    "params": f"第 {disp_num} 首: 《{target_title}》{art_disp}",
-                    "status": "success",
-                    "result": f"已为你播放歌单中的第 {disp_num} 首《{target_title}》"
-                }
-                ans = f"好的，已为你切换并播放歌单中的第 {disp_num} 首：《{target_title}》{art_disp} 🎵"
-                return WorkflowOutput(answer_text=ans, tools=[tool_card], success=True)
+                if play_reply.get("success"):
+                    res_info = play_reply.get("result", {})
+                    if not target_title:
+                        target_title = res_info.get("title", f"第 {disp_num} 首")
+                    if not target_artist:
+                        target_artist = res_info.get("artist", "")
+                    if target_track:
+                        session_ctx.record_played_track(target_track)
+                    art_disp = f" - {target_artist}" if target_artist else ""
+                    tool_card = {
+                        "name": "歌单选曲",
+                        "action": "play_local_track",
+                        "params": f"第 {disp_num} 首: 《{target_title}》{art_disp}",
+                        "status": "success",
+                        "result": f"已为你播放歌单中的第 {disp_num} 首《{target_title}》"
+                    }
+                    ans = f"好的，已为你切换并播放歌单中的第 {disp_num} 首：《{target_title}》{art_disp} 🎵"
+                    return WorkflowOutput(answer_text=ans, tools=[tool_card], success=True)
+
+            # 若未包含本地文件句柄或开播失败，则无缝转换为基于歌名与歌手的标准点播搜索
+            if target_title:
+                query = target_title
+            if target_artist:
+                artist = target_artist
 
         # 2. 歌词搜歌与识别处理 (例如："我想听有一首歌 歌词是还记得家是唯一的城堡")
         lyrics_query = kwargs.get("lyrics_query", "")
@@ -314,5 +321,8 @@ class SearchAndPlayWorkflow(BaseWorkflow):
             "status": "success",
             "result": f"已为你载入并开播《{target_title}》"
         }
-        ans = f"好的，已为你播放《{target_title}》{artist_display} 🎵 快戴上耳机享受美妙音乐吧！"
+        if kwargs.get("is_decision"):
+            ans = f"好的，已为你选择并开播我最推荐的《{target_title}》{artist_display} 🎵 快戴上耳机享受美妙音乐吧！✨"
+        else:
+            ans = f"好的，已为你播放《{target_title}》{artist_display} 🎵 快戴上耳机享受美妙音乐吧！"
         return WorkflowOutput(answer_text=ans, tools=[tool_card], success=True)
