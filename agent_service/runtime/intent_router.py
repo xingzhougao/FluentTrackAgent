@@ -581,15 +581,18 @@ class IntentRouter:
         chat_conversational_triggers = [
             "你好", "您好", "早上好", "中午好", "下午好", "晚上好", "早安", "午安", "晚安",
             "嗨", "哈喽", "hello", "hi", "在吗", "在不在", "有人吗", "你是谁", "你叫什么",
-            "你猜", "猜猜", "你觉得", "你认为", "聊聊", "谈谈", "今天天气", "心情如何", "心情怎么样"
+            "你猜", "猜猜", "你觉得", "你认为", "聊聊", "谈谈", "今天天气", "心情如何", "心情怎么样",
+            "心情不好", "心情有点不好", "心情很差", "心情糟糕", "心情低落", "心情烦躁", "心情郁闷",
+            "难过", "好难过", "我好难过", "伤心", "心烦", "好累", "我好累", "好累啊", "好烦",
+            "失恋", "我失恋了", "压力大", "不开心", "郁闷", "受委屈", "开心", "好开心", "很开心"
         ]
         has_explicit_play_verb = any(v in clean_text for v in [
             "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
             "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
             "放首", "播首", "听首", "整首", "来首", "搜一下", "查一下", "找一下", "点一首", "点首",
-            "下载", "缓存"
+            "下载", "缓存", "推荐", "生成歌单", "建个歌单", "放歌", "听歌", "放点", "播点", "来点"
         ])
-        if any(trig in clean_text for trig in chat_conversational_triggers) and not has_explicit_play_verb and "《" not in clean_text:
+        if any(trig in clean_text for trig in chat_conversational_triggers) and not has_explicit_play_verb and "《" not in clean_text and "歌单" not in clean_text:
             return IntentResult(intent_type="CHAT")
 
         effective_provider = llm_provider or kwargs.get("provider")
@@ -606,7 +609,7 @@ class IntentRouter:
 
         suspicious_keywords = [
             "音量", "声音", "放", "停", "切", "唱", "歌", "大声", "小声",
-            "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "推荐", "心情", "首"
+            "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "推荐", "首", "歌单"
         ]
         if not any(k in text for k in suspicious_keywords) or not effective_provider:
             return IntentResult(intent_type="CHAT")
@@ -632,10 +635,13 @@ class IntentRouter:
 2. SEARCH_AND_PLAY (指定曲目或歌手点歌):
    - search_and_play: {{"query": "歌名", "artist": "歌手"}}
 3. SMART_PLAYLIST (根据心情、情绪、工作学习场景推荐并播放):
+   - 只有用户【明确要求播放、推荐、生成音乐或歌单】时才属于此类！例如：“放点写代码听的歌”、“推荐几首治愈系音乐”、“来几首助眠轻音乐”、“生成一个跑步歌单”。
+   - 【严禁误判】：如果用户只是单纯倾诉感受、宣泄情绪或陈述状态（例如“我今天心情有点不好”、“我失恋了”、“好累啊”、“今天被骂了”），没有明确要求放歌或生成歌单，【绝不能】归为 SMART_PLAYLIST，必须严格归为 CHAT！
    - smart_playlist: {{"mood": "情绪关键词", "scene": "场景关键词", "language": "语种", "count": 数量}}
 4. NETWORK_DISCOVERY (全网/网络搜索、下载曲目):
    - network_discovery: {{"query": "歌名", "artist": "歌手", "auto_download": true}}
-5. CHAT (常规聊天、问答、与播放操作无关):
+5. CHAT (常规聊天、问答、倾诉心事、心情表达、情感交流、与播放操作无关):
+   - 用户闲聊、问候、打招呼、倾诉日常心事与情感（例如“我今天心情有点不好”、“你猜我今天心情如何”、“睡不着”、“今天好累”等全部属于此类）！
    - chat: {{}}
 
 用户指令: "{text}"

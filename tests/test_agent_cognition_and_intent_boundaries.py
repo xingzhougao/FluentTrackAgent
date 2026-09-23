@@ -22,6 +22,10 @@ async def test_natural_conversation_not_hijacked():
     chat_phrases = [
         "你猜我今天的心情如何",
         "你猜猜我今天心情如何",
+        "我今天心情有点不好",
+        "我今天心情不好",
+        "今天心情很差",
+        "我失恋了",
         "下午好",
         "你好",
         "你好呀",
