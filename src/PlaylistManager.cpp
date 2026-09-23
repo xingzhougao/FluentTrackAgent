@@ -205,7 +205,15 @@ MusicTrack PlaylistManager::resolveTrackFromFile(const QString & filePath) const
 
     track.filePath = info.absoluteFilePath();
     QString baseName = info.completeBaseName();
-    QStringList parts = baseName.split(QStringLiteral(" - "));
+    QStringList parts;
+    if (baseName.contains(QStringLiteral(" - "))) {
+        parts = baseName.split(QStringLiteral(" - "));
+    } else if (baseName.contains(QStringLiteral("-"))) {
+        parts = baseName.split(QStringLiteral("-"));
+    } else if (baseName.contains(QStringLiteral("_"))) {
+        parts = baseName.split(QStringLiteral("_"));
+    }
+
     if (parts.size() >= 3)
     {
         track.title = parts[1].trimmed();

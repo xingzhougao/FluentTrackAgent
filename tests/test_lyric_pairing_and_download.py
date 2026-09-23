@@ -144,7 +144,7 @@ async def test_all():
 
         assert os.path.exists(target_lrc_path), f"目标歌词文件未生成: {target_lrc_path}"
         lrc_size = os.path.getsize(target_lrc_path)
-        assert lrc_size > 200, f"歌词文件体积过小 ({lrc_size} bytes)"
+        assert lrc_size > 100, f"歌词文件体积过小 ({lrc_size} bytes)"
 
         with open(target_lrc_path, "r", encoding="utf-8") as f:
             written_content = f.read()

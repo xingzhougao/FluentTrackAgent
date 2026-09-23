@@ -65,7 +65,7 @@ class DownloadService:
                 if head.startswith(b"ID3") or head.startswith(b"fLaC") or b"\xff\xfb" in head or b"\xff\xfa" in head:
                     logger.info(f"[DownloadService] 本地已存在合法曲目，无需重复下载: {target_path}")
                     if not os.path.exists(target_lrc_path) or os.path.getsize(target_lrc_path) < 20:
-                        await self._fetch_or_create_lrc(candidate, target_lrc_path)
+                        await self._fetch_or_create_lrc(candidate, target_lrc_path, target_path)
                     self._sync_to_local_music_dir(target_path, target_lrc_path)
                     return target_path
 
@@ -90,7 +90,7 @@ class DownloadService:
                                 if os.path.abspath(found_f) != os.path.abspath(target_path):
                                     shutil.copy2(found_f, target_path)
                                 logger.info(f"[DownloadService] 在本地曲库子目录中定位到已下载曲目: {found_f} -> {target_path}")
-                                await self._fetch_or_create_lrc(candidate, target_lrc_path)
+                                await self._fetch_or_create_lrc(candidate, target_lrc_path, target_path)
                                 self._sync_to_local_music_dir(target_path, target_lrc_path)
                                 return target_path
 
@@ -195,14 +195,14 @@ class DownloadService:
             return None
 
         # 异步拉取/写入精准打点歌词文件 (.lrc)
-        await self._fetch_or_create_lrc(active_cand, target_lrc_path)
+        await self._fetch_or_create_lrc(active_cand, target_lrc_path, target_path)
 
         # 同步拷贝到 qml/music_resource/loadmusic_by_default 目录，确保双目录完全一致
         self._sync_to_local_music_dir(target_path, target_lrc_path)
 
         return target_path
 
-    async def _fetch_or_create_lrc(self, candidate: TrackCandidate, lrc_path: str):
+    async def _fetch_or_create_lrc(self, candidate: TrackCandidate, lrc_path: str, audio_path: str = ""):
         """调用 LyricService 拉取真实打点歌词，保证与音频完全同步"""
         extra = getattr(candidate, "extra", {}) or {}
         preset_lrc = extra.get("lyrics", "")
@@ -212,7 +212,13 @@ class DownloadService:
         except ImportError:
             from agent_service.services.lyric_service import lyric_service
 
-        duration_sec = float(candidate.duration) if candidate.duration > 0 else 240.0
+        # 优先读取已下载音频文件的真实物理时长
+        detected_dur = self.detect_audio_duration_sec(audio_path)
+        if detected_dur > 10.0:
+            duration_sec = detected_dur
+        else:
+            duration_sec = float(candidate.duration) if candidate.duration > 0 else 240.0
+
         lrc_text, src = await lyric_service.fetch_paired_lrc(
             title=candidate.title,
             artist=candidate.artist,
@@ -223,9 +229,52 @@ class DownloadService:
         try:
             with open(lrc_path, "w", encoding="utf-8") as f:
                 f.write(lrc_text)
-            logger.info(f"[DownloadService] 歌词文件双轨配对写入成功 (来源={src}): {lrc_path}")
+            logger.info(f"[DownloadService] 歌词文件双轨配对写入成功 (来源={src}, 时长={duration_sec:.1f}s): {lrc_path}")
         except Exception as e:
             logger.error(f"[DownloadService] 写入歌词文件失败: {e}")
+
+    @staticmethod
+    def detect_audio_duration_sec(path: str) -> float:
+        """精确探测本地音频文件的实际物理时长 (秒)"""
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 1000:
+            return 0.0
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".wav":
+            try:
+                import wave
+                with wave.open(path, "rb") as w:
+                    return float(w.getnframes()) / float(w.getframerate())
+            except Exception:
+                pass
+        elif ext == ".flac":
+            try:
+                with open(path, "rb") as f:
+                    if f.read(4) == b"fLaC":
+                        block_header = f.read(4)
+                        if block_header and (block_header[0] & 0x7F) == 0:
+                            data = f.read(34)
+                            sr = (data[10] << 12) | (data[11] << 4) | (data[12] >> 4)
+                            total_samples = ((data[13] & 0x0F) << 32) | (data[14] << 24) | (data[15] << 16) | (data[16] << 8) | data[17]
+                            if sr > 0:
+                                return float(total_samples) / float(sr)
+            except Exception:
+                pass
+        elif ext == ".mp3":
+            try:
+                import struct
+                with open(path, "rb") as f:
+                    data = f.read(150000)
+                pos = data.find(b"Xing")
+                if pos == -1:
+                    pos = data.find(b"Info")
+                if pos != -1 and len(data) >= pos + 12:
+                    flags = struct.unpack(">I", data[pos+4:pos+8])[0]
+                    if flags & 1:
+                        frames = struct.unpack(">I", data[pos+8:pos+12])[0]
+                        return frames * 1152.0 / 44100.0
+            except Exception:
+                pass
+        return 0.0
 
     def _sync_to_local_music_dir(self, mp3_path: str, lrc_path: str):
         """将下载的音频与歌词同步备份到 local_music_dir (loadmusic_by_default) 目录"""

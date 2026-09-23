@@ -318,6 +318,23 @@ void PlayerController::setPlayMode(int mode)
     emit playModeChanged();
 }
 
+// 辅助判定字符串是否为乱码（包含 Unicode 替换字符 \uFFFD 或非法不可见控制字符）
+static bool isGarbledString(const QString &str)
+{
+    if (str.isEmpty())
+        return false;
+    if (str.contains(QChar(0xFFFD)) || str.contains(QChar(0xFFFE)))
+        return true;
+    for (const QChar &ch : str) {
+        if (ch.isLowSurrogate() || ch.isHighSurrogate())
+            continue;
+        ushort u = ch.unicode();
+        if (u < 0x20 && u != '\t' && u != '\n' && u != '\r')
+            return true;
+    }
+    return false;
+}
+
 //读取MP3元数据 MP3->QMediaMetaData->MusicLibraryModel
 void PlayerController::readMetaData()
 {
@@ -328,20 +345,38 @@ void PlayerController::readMetaData()
         return;
 
     const QMediaMetaData metaData = m_player->metaData();
+    MusicTrack currentExisting = m_library->trackAt(m_index);
 
     QString title = metaData.stringValue(QMediaMetaData::Title).trimmed();
     QString artist = metaData.stringValue(QMediaMetaData::ContributingArtist).trimmed();
     if(artist.isEmpty())
         artist = metaData.stringValue(QMediaMetaData::Author).trimmed();
-    const QString album = metaData.stringValue(QMediaMetaData::AlbumTitle).trimmed();
+    QString album = metaData.stringValue(QMediaMetaData::AlbumTitle).trimmed();
     qint64 musicDuration = m_player->duration();
     if(musicDuration <= 0)
         musicDuration = metaData.value(QMediaMetaData::Duration).toLongLong();
+
+    // 乱码安全防护：若 QMediaPlayer 解码出的元数据包含乱码或替换符（常见于老式 GBK 编码音频），严禁覆盖有效数据
+    if (isGarbledString(title)) {
+        title = currentExisting.title;
+    }
+    if (isGarbledString(artist)) {
+        artist = currentExisting.artist;
+    }
+    if (isGarbledString(album)) {
+        album = currentExisting.album;
+    }
+
+    if (title.isEmpty()) title = currentExisting.title;
+    if (artist.isEmpty()) artist = currentExisting.artist;
+    if (album.isEmpty()) album = currentExisting.album;
+    if (musicDuration <= 0) musicDuration = currentExisting.duration;
+
     //更新MusicLibraryModel
     m_library->updateMetadata(m_index,title,artist,album,musicDuration);
-    if (!title.isEmpty()) m_currentTrack.title = title;
-    if (!artist.isEmpty()) m_currentTrack.artist = artist;
-    if (!album.isEmpty()) m_currentTrack.album = album;
+    m_currentTrack.title = title;
+    m_currentTrack.artist = artist;
+    m_currentTrack.album = album;
     if (musicDuration > 0) m_currentTrack.duration = musicDuration;
 }
 

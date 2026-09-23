@@ -90,7 +90,15 @@ void MusicLibraryModel::scanDirectory(const QString & directory)
         MusicTrack track;
         track.filePath = info.absoluteFilePath();
         QString baseName = info.completeBaseName();
-        QStringList parts = baseName.split(" - ");
+        QStringList parts;
+        if (baseName.contains(QStringLiteral(" - "))) {
+            parts = baseName.split(QStringLiteral(" - "));
+        } else if (baseName.contains(QStringLiteral("-"))) {
+            parts = baseName.split(QStringLiteral("-"));
+        } else if (baseName.contains(QStringLiteral("_"))) {
+            parts = baseName.split(QStringLiteral("_"));
+        }
+
         //提取文件名中的序号 歌曲 歌手
         if(parts.size() >= 3)
         {
