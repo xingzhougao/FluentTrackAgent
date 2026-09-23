@@ -118,7 +118,11 @@ DIRECTIVE_SUFFIX_PATTERNS = [
     re.compile(r"[,，!！\s]*(?:网上有|网络上有|网上能搜到|全网有|你去搜|你去搜搜|你搜搜看|你去查查)$", re.IGNORECASE),
 ]
 
-INVALID_ARTIST_SUBSTRINGS = ["不是", "错", "给", "没有", "搜索", "本地", "刚才", "刚刚", "推荐", "喜欢", "怎么", "什么", "为什么", "歌曲", "音乐", "去搜", "曲库"]
+INVALID_ARTIST_SUBSTRINGS = [
+    "不是", "错", "给", "没有", "搜索", "本地", "刚才", "刚刚", "推荐", "喜欢",
+    "怎么", "什么", "为什么", "歌曲", "音乐", "去搜", "曲库", "上班", "下班",
+    "累", "一天", "加班", "睡觉", "吃饭", "今天", "明天", "昨天", "觉得", "认为"
+]
 
 INVALID_ARTIST_EXACT = {
     "迷人", "动听", "好听", "难听", "优美", "伤感", "悲伤", "欢快", "快乐",
@@ -150,6 +154,8 @@ def is_valid_artist_name(name: str) -> bool:
         return False
     if any(sub in name for sub in INVALID_ARTIST_SUBSTRINGS):
         return False
+    if len(name) >= 3 and name.endswith(("了", "啊", "呀", "吧", "呢", "的")):
+        return False
     return True
 
 
@@ -165,6 +171,13 @@ def clean_song_title(raw: str) -> str:
         text = stripped
     for pat in DIRECTIVE_SUFFIX_PATTERNS:
         text = pat.sub("", text).strip().strip('《》"\'“”：: -_')
+
+    # 严禁将包含询问或推荐的日常对话误作为歌名
+    invalid_song_phrases = ["推荐", "有没有", "有什么", "有啥", "哪些", "几首", "歌曲推荐", "音乐推荐", "什么歌", "哪首"]
+    if any(p in text for p in invalid_song_phrases) and "《" not in raw:
+        return ""
+    if len(text) > 15 and "《" not in raw:
+        return ""
     return text
 
 
@@ -512,9 +525,8 @@ class IntentRouter:
             return IntentResult(intent_type="PLAYER_CONTROL", action="set_play_mode", params={"mode": 0})
 
         # 8. 场景与情绪智能歌单 (SMART_PLAYLIST)
-        # 例如：“我今天有点不开心 给我播放一首能让我心情愉悦的歌曲”
-        # “我要写代码了，来几首轻快的中文歌”
-        # “放点适合助眠的纯音乐”
+        # 严格门禁：只有包含明确的“生成歌单/建歌单”指令、或“放点/播点/来几首”强播放动词时才自动创建歌单；
+        # 凡是带有“推荐”、“有没有”、“有啥”、“有什么”的咨询类语句，严禁自动建歌单，100% 归入大模型智能推荐对话！
         mood_scene_keywords = [
             "不开心", "难过", "伤心", "心情愉悦", "心情好", "心情不好", "郁闷", "压抑", "烦躁",
             "开心", "欢快", "轻快", "治愈", "高能", "兴奋",
@@ -523,8 +535,11 @@ class IntentRouter:
             "运动", "跑步", "健身", "锻炼",
             "通勤", "散步", "开车", "自驾"
         ]
-        has_music_trigger = any(w in lower for w in ["播放", "放", "推荐", "听", "来", "歌", "曲"])
-        if any(kw in lower for kw in mood_scene_keywords) and has_music_trigger:
+        is_recommend_inquiry = any(w in lower for w in ["推荐", "有没有", "有什么", "有啥", "求推荐", "哪些", "介绍", "建议"])
+        is_explicit_playlist_cmd = any(w in lower for w in ["生成歌单", "建个歌单", "建歌单", "创建歌单", "智能歌单", "歌单"])
+        is_scene_play_cmd = any(w in lower for w in ["放点", "播点", "来点", "放些", "播些", "来些", "放几首", "播几首", "来几首"]) and any(w in lower for w in ["歌", "音乐", "曲"])
+
+        if any(kw in lower for kw in mood_scene_keywords) and not is_recommend_inquiry and (is_explicit_playlist_cmd or is_scene_play_cmd):
             return IntentResult(
                 intent_type="SMART_PLAYLIST",
                 action="smart_playlist",
@@ -533,7 +548,13 @@ class IntentRouter:
 
         # 9. 精准与全场景口语化点歌 (SEARCH_AND_PLAY)
         # 严格门禁：只有包含明确点歌/听歌动词、或者书名号、标准分隔符时，才触发规则点歌工作流；
-        # 其余所有开放对话（如“你猜我今天的心情如何”、“你好”、“我今天好累”），坚决不通过规则劫持，100% 归还给大模型心智大脑！
+        # 严禁将推荐询问与开放探讨（如“今天好累啊 有没有什么激情的中文歌曲推荐”、“下班累一天了 给我推荐几首歌曲”）误判为点歌！
+        recommendation_inquiry_words = [
+            "推荐", "有没有", "有啥", "有什么", "有哪些", "求推荐", "哪几首", "什么歌", "什么歌曲", "介绍", "建议", "几首", "一些歌"
+        ]
+        if any(w in lower for w in recommendation_inquiry_words) and "《" not in clean:
+            return None
+
         has_play_verb = any(v in lower for v in [
             "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
             "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
@@ -541,11 +562,10 @@ class IntentRouter:
             "唱一首", "唱首", "下载", "缓存"
         ])
         has_book_quotes = ("《" in clean and "》" in clean)
-        has_song_noun = any(n in lower for n in ["歌曲", "这首歌", "那首歌", "这首", "那首", "单曲", "曲目", "伴奏", "原声"])
         has_delim = (" - " in clean) or ("-" in clean and len(clean.split("-")) == 2 and not any(ch in clean for ch in "，,。！？!?"))
         is_known_song = (clean in KNOWN_TITLES_WITH_DE)
 
-        is_explicit_music_intent = has_play_verb or has_book_quotes or has_song_noun or has_delim or is_known_song
+        is_explicit_music_intent = has_play_verb or has_book_quotes or has_delim or is_known_song
 
         if not is_explicit_music_intent:
             return None
@@ -572,27 +592,31 @@ class IntentRouter:
     ) -> IntentResult:
         """
         统一意图路由入口：
-        0. 快速识别日常社交与开放性聊天
+        0. 快速识别日常社交、情绪倾诉与音乐推荐咨询
         1. 快速确定性规则
         2. 若未命中且带音乐相关词汇，由 LLM 做结构化意图槽位识别
         """
         clean_text = text.strip()
-        # 0. 明确的日常社交、心情探讨与开放性闲聊判定（绝不误拦截为搜歌或下载）
+        # 0. 明确的日常社交、心情探讨、音乐推荐咨询与开放性闲聊判定（绝不误拦截为搜歌或下载）
         chat_conversational_triggers = [
             "你好", "您好", "早上好", "中午好", "下午好", "晚上好", "早安", "午安", "晚安",
             "嗨", "哈喽", "hello", "hi", "在吗", "在不在", "有人吗", "你是谁", "你叫什么",
             "你猜", "猜猜", "你觉得", "你认为", "聊聊", "谈谈", "今天天气", "心情如何", "心情怎么样",
             "心情不好", "心情有点不好", "心情很差", "心情糟糕", "心情低落", "心情烦躁", "心情郁闷",
             "难过", "好难过", "我好难过", "伤心", "心烦", "好累", "我好累", "好累啊", "好烦",
-            "失恋", "我失恋了", "压力大", "不开心", "郁闷", "受委屈", "开心", "好开心", "很开心"
+            "失恋", "我失恋了", "压力大", "不开心", "郁闷", "受委屈", "开心", "好开心", "很开心",
+            "推荐", "有没有", "有什么", "有啥", "求推荐", "好听的歌", "什么歌好听"
         ]
         has_explicit_play_verb = any(v in clean_text for v in [
             "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
             "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
-            "放首", "播首", "听首", "整首", "来首", "搜一下", "查一下", "找一下", "点一首", "点首",
-            "下载", "缓存", "推荐", "生成歌单", "建个歌单", "放歌", "听歌", "放点", "播点", "来点"
+            "放首", "播首", "听首", "整首", "来首", "下载", "缓存", "放歌", "听歌", "放点", "播点", "来点"
         ])
-        if any(trig in clean_text for trig in chat_conversational_triggers) and not has_explicit_play_verb and "《" not in clean_text and "歌单" not in clean_text:
+        is_recommend_inquiry = any(w in clean_text for w in ["推荐", "有没有", "有啥", "有什么", "有哪些", "求推荐"])
+        is_chat_trigger = any(trig in clean_text for trig in chat_conversational_triggers)
+
+        # 推荐咨询或日常聊天，且没有显式指定书名号或“生成歌单”指令时，100% 走大模型伴侣聊天推荐
+        if (is_chat_trigger or is_recommend_inquiry) and not has_explicit_play_verb and "《" not in clean_text and "歌单" not in clean_text:
             return IntentResult(intent_type="CHAT")
 
         effective_provider = llm_provider or kwargs.get("provider")
@@ -609,7 +633,7 @@ class IntentRouter:
 
         suspicious_keywords = [
             "音量", "声音", "放", "停", "切", "唱", "歌", "大声", "小声",
-            "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "推荐", "首", "歌单"
+            "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "首", "歌单"
         ]
         if not any(k in text for k in suspicious_keywords) or not effective_provider:
             return IntentResult(intent_type="CHAT")
@@ -632,16 +656,17 @@ class IntentRouter:
    - previous_track: 上一首
    - toggle_favorite: 收藏或喜欢
    - get_player_state: 查询当前放什么歌或播放状态
-2. SEARCH_AND_PLAY (指定曲目或歌手点歌):
+2. SEARCH_AND_PLAY (指定具体曲目或歌手点歌):
+   - 必须是点播具体的某首歌或歌手！例如：“播放 晴天”、“我想听周杰伦的安静”。
    - search_and_play: {{"query": "歌名", "artist": "歌手"}}
-3. SMART_PLAYLIST (根据心情、情绪、工作学习场景推荐并播放):
-   - 只有用户【明确要求播放、推荐、生成音乐或歌单】时才属于此类！例如：“放点写代码听的歌”、“推荐几首治愈系音乐”、“来几首助眠轻音乐”、“生成一个跑步歌单”。
-   - 【严禁误判】：如果用户只是单纯倾诉感受、宣泄情绪或陈述状态（例如“我今天心情有点不好”、“我失恋了”、“好累啊”、“今天被骂了”），没有明确要求放歌或生成歌单，【绝不能】归为 SMART_PLAYLIST，必须严格归为 CHAT！
+3. SMART_PLAYLIST (根据心情、情绪、工作学习场景【明确要求生成/播放歌单】):
+   - 必须包含明确的歌单生成或特定模式播放指令！例如：“生成一个写代码的歌单”、“放点写代码听的歌”、“来几首助眠音乐”。
+   - 【严禁误判】：如果用户是在询问推荐、征求建议、闲聊（例如“今天好累啊 有没有什么激情的中文歌曲推荐”、“下班累一天了 给我推荐几首歌曲”、“推荐几首好听的歌”），属于向音乐伴侣咨询，【绝不能】直接强行建歌单和开播，必须严格归为 CHAT！
    - smart_playlist: {{"mood": "情绪关键词", "scene": "场景关键词", "language": "语种", "count": 数量}}
 4. NETWORK_DISCOVERY (全网/网络搜索、下载曲目):
    - network_discovery: {{"query": "歌名", "artist": "歌手", "auto_download": true}}
-5. CHAT (常规聊天、问答、倾诉心事、心情表达、情感交流、与播放操作无关):
-   - 用户闲聊、问候、打招呼、倾诉日常心事与情感（例如“我今天心情有点不好”、“你猜我今天心情如何”、“睡不着”、“今天好累”等全部属于此类）！
+5. CHAT (常规聊天、问答、倾诉心事、心情表达、音乐推荐咨询与探讨):
+   - 用户闲聊、问候、打招呼、倾诉心事、或者咨询推荐音乐（例如“今天好累啊 有没有什么激情的中文歌曲推荐”、“下班累一天了 给我推荐几首歌曲”、“我今天心情有点不好”、“你猜我今天心情如何”等全部属于此类）！
    - chat: {{}}
 
 用户指令: "{text}"
