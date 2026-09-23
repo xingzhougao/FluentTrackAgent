@@ -20,13 +20,25 @@ class OllamaProvider(BaseLlmProvider):
         super().__init__(base_url, model_name, api_key="", timeout=timeout)
         self.enable_thinking = enable_thinking
         is_reasoning = "r1" in model_name.lower() or "qwq" in model_name.lower() or enable_thinking
-        self._capabilities = LlmCapabilities(
-            streaming=True,
-            native_tools=False,
-            structured_output=True,
-            reasoning=is_reasoning,
-            context_window=32768
-        )
+        self._last_avail_check = 0.0
+        self._is_avail_cached = False
+
+    async def check_availability(self) -> bool:
+        """极速健康探测 (0.5s 超时)，避免离线时挂起 asyncio 事件循环"""
+        import time
+        now = time.time()
+        if now - self._last_avail_check < 3.0:
+            return self._is_avail_cached
+
+        self._last_avail_check = now
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1.0, connect=0.5)) as client:
+                r = await client.get(f"{self.base_url}/api/tags")
+                self._is_avail_cached = (r.status_code == 200)
+                return self._is_avail_cached
+        except Exception:
+            self._is_avail_cached = False
+            return False
 
     @property
     def capabilities(self) -> LlmCapabilities:
@@ -38,6 +50,11 @@ class OllamaProvider(BaseLlmProvider):
         temperature: float = 0.6,
         **kwargs
     ) -> AsyncGenerator[str, None]:
+        # 极速探测：若 Ollama 未启动，毫秒级直接返回，绝不阻塞整个系统的异步事件循环
+        if not await self.check_availability():
+            yield "【未检测到本地 Ollama 服务正在运行。您可以启动 Ollama 体验完整聊天互动，基础播放与搜索仍正常可用哦 🎵】"
+            return
+
         # Ollama 原生 /api/chat 端点
         url = f"{self.base_url}/api/chat"
         payload = {
@@ -52,7 +69,7 @@ class OllamaProvider(BaseLlmProvider):
         if not self.enable_thinking:
             payload["think"] = False
 
-        timeout_config = httpx.Timeout(self.timeout, connect=15.0)
+        timeout_config = httpx.Timeout(self.timeout, connect=1.0)
         async with httpx.AsyncClient(timeout=timeout_config) as client:
             try:
                 async with client.stream("POST", url, json=payload) as response:

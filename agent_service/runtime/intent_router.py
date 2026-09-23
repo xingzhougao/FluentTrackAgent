@@ -120,10 +120,31 @@ DIRECTIVE_SUFFIX_PATTERNS = [
 
 INVALID_ARTIST_SUBSTRINGS = ["不是", "错", "给", "没有", "搜索", "本地", "刚才", "刚刚", "推荐", "喜欢", "怎么", "什么", "为什么", "歌曲", "音乐", "去搜", "曲库"]
 
+INVALID_ARTIST_EXACT = {
+    "迷人", "动听", "好听", "难听", "优美", "伤感", "悲伤", "欢快", "快乐",
+    "温柔", "残酷", "美丽", "孤独", "最初", "最长", "不能说", "被风吹过",
+    "反方向", "蒲公英", "夏天", "冬天", "盛夏", "彩虹", "春天", "秋天",
+    "你", "我", "他", "她", "它", "你们", "我们", "他们", "自己", "谁", "大家",
+    "你猜", "我猜", "今天", "昨天", "明天", "现在", "刚才", "刚刚", "曾经", "以前",
+    "你猜我", "你猜我今天", "这", "那", "这个", "那个", "心情", "心情如何",
+    "你好", "您好", "在吗", "哈喽", "谢谢", "再见"
+}
+
+KNOWN_TITLES_WITH_DE = {
+    "迷人的危险", "最初的梦想", "最长的电影", "不能说的秘密", "反方向的钟",
+    "夜的第七章", "蒲公英的约定", "手写的从前", "彩虹的微笑", "夏天的风",
+    "冬天的秘密", "盛夏的果实", "残酷的温柔", "温柔的慈悲", "会呼吸的痛",
+    "给自己的歌", "爱的代价", "爱的供养", "你的背包", "你的微笑",
+    "你的答案", "你的眼神", "你的名字", "我的歌声里", "我的秘密",
+    "我们的歌", "我们的爱", "该死的温柔", "风吹过的夏天", "被风吹过的夏天"
+}
+
 
 def is_valid_artist_name(name: str) -> bool:
-    """校验提取出的歌手名是否合法真实，杜绝把对话吐槽误当歌手"""
+    """校验提取出的歌手名是否合法真实，杜绝把对话吐槽、代词、形容词误当歌手"""
     if not name or len(name) > 10:
+        return False
+    if name in INVALID_ARTIST_EXACT:
         return False
     if any(ch in name for ch in "，,。！？!?；;:：\n"):
         return False
@@ -134,17 +155,16 @@ def is_valid_artist_name(name: str) -> bool:
 
 def clean_song_title(raw: str) -> str:
     """循环剥离所有前置修饰语、量词、定语与尾部指令"""
-    text = raw.strip().strip('《》"\'“”：: ')
+    text = raw.strip().strip('《》"\'“”：: -_')
     for pat in DIRECTIVE_SUFFIX_PATTERNS:
-        text = pat.sub("", text).strip()
+        text = pat.sub("", text).strip().strip('《》"\'“”：: -_')
     while True:
-        stripped = MODIFIERS_PATTERN.sub("", text).strip()
-        stripped = stripped.strip('《》"\'“”：: ')
+        stripped = MODIFIERS_PATTERN.sub("", text).strip().strip('《》"\'“”：: -_')
         if stripped == text:
             break
         text = stripped
     for pat in DIRECTIVE_SUFFIX_PATTERNS:
-        text = pat.sub("", text).strip()
+        text = pat.sub("", text).strip().strip('《》"\'“”：: -_')
     return text
 
 
@@ -205,7 +225,8 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
     cmd_prefix = re.compile(
         r"^(?:帮我|请帮我|给我|我想|我要|麻烦你?|请)?\s*"
         r"(?:播放|放|听|播|来|搜|找|点|整)\s*"
-        r"(?:一下|一首|首|个|点|曲)?\s*",
+        r"(?:一下|一首|首|个|点|曲)?\s*"
+        r"(?:这首歌曲|这首歌|这首|歌曲|单曲|音乐)?\s*",
         re.IGNORECASE
     )
     body = cmd_prefix.sub("", clean).strip()
@@ -216,24 +237,34 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
     art = ""
     song = ""
 
+    # 句型 0: 检查是否直接命中已知含“的”经典歌名 (如“迷人的危险”)
+    if body in KNOWN_TITLES_WITH_DE:
+        return "", body
+
+    # 检查是否为 [歌手] 的 [已知含“的”经典歌名] (如“周杰伦的最长的电影”, “紫薇的迷人的危险”)
+    for known in KNOWN_TITLES_WITH_DE:
+        if body.endswith(known) and len(body) > len(known):
+            prefix = body[:-len(known)].rstrip("的 ")
+            if prefix:
+                prefix_art = clean_artist_name(prefix)
+                if is_valid_artist_name(prefix_art):
+                    return prefix_art, known
+                return "", body
+
     # 句型 1: 包含“的”字
     if "的" in body:
         parts = body.split("的")
-        # 如果第一段是纯修饰词（如“我想听那首很火的漠河舞厅” -> parts[0] = "那首很火"）
-        if is_pure_modifier(parts[0]):
+        cleaned_p0 = clean_artist_name(parts[0])
+        # 如果第一段是纯修饰词、或者属于非法歌手名（如“迷人”、“动听”、“你猜我今天”）
+        if is_pure_modifier(parts[0]) or not is_valid_artist_name(cleaned_p0):
             art = ""
+            # 如果第一段不是合法歌手，整句保留为完整歌名 (如《迷人的危险》)
+            song = clean_song_title(body)
+        else:
+            # 第一段是真实歌手（如 '周杰伦'）
+            art = cleaned_p0
             rest = "的".join(parts[1:])
             song = clean_song_title(rest)
-        else:
-            # 第一段是歌手（或歌手+修饰，如 '周杰伦最火' -> '周杰伦', '张杰' -> '张杰'）
-            raw_art = clean_artist_name(parts[0])
-            if is_valid_artist_name(raw_art):
-                art = raw_art
-                rest = "的".join(parts[1:])
-                song = clean_song_title(rest)
-            else:
-                art = ""
-                song = clean_song_title(body)
 
     # 句型 2: 中间包含明显的特征修饰词（如“王菲经典老歌红豆”, “周杰伦主打歌晴天”）
     else:
@@ -261,7 +292,18 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
                     song = clean_song_title(m.group(2).strip())
                 else:
                     song = clean_song_title(body)
-            # 句型 4: 空格分隔（例如：“周杰伦 晴天”）
+            # 句型 4: 短横线分隔（例如：“周杰伦 - 晴天”, “周杰伦-晴天”）
+            elif " - " in body or ("-" in body and len(body.split("-")) == 2 and not any(ch in body for ch in "，,。！？!?")):
+                sep = " - " if " - " in body else "-"
+                parts = body.split(sep, 1)
+                p0 = clean_artist_name(parts[0])
+                p1 = clean_song_title(parts[1])
+                if is_valid_artist_name(p0) and p1 and p1 not in NOT_SONG_NAMES and not is_pure_modifier(p0):
+                    art = p0
+                    song = p1
+                else:
+                    song = clean_song_title(body)
+            # 句型 5: 空格分隔（例如：“周杰伦 晴天”）
             elif " " in body:
                 parts = body.split(None, 1)
                 p0 = clean_artist_name(parts[0])
@@ -271,7 +313,7 @@ def extract_music_entity(text: str) -> Optional[Tuple[str, str]]:
                     song = p1
                 else:
                     song = clean_song_title(body)
-            # 句型 5: 直接纯歌名输入
+            # 句型 6: 直接纯歌名输入
             else:
                 song = clean_song_title(body)
 
@@ -490,17 +532,23 @@ class IntentRouter:
             )
 
         # 9. 精准与全场景口语化点歌 (SEARCH_AND_PLAY)
-        # 支持各种复杂修饰语、定语与口语句式，如：
-        # - “播放一下张杰的代表作歌曲着魔” -> artist="张杰", query="着魔"
-        # - “帮我播放一下 马天宇的歌曲 该死的温柔” -> artist="马天宇", query="该死的温柔"
-        # - “我想听周杰伦最火的那首七里香” -> artist="周杰伦", query="七里香"
-        # - “放一首陈奕迅很好听的孤勇者” -> artist="陈奕迅", query="孤勇者"
-        # - “来首许嵩脍炙人口的经典老歌断桥残雪” -> artist="许嵩", query="断桥残雪"
-        # - “播放一下林俊杰2008年出的那首醉赤壁” -> artist="林俊杰", query="醉赤壁"
-        # - “帮我找一下电影大话西游的主题曲一生所爱” -> artist="电影大话西游", query="一生所爱"
-        # - “放一首周杰伦的歌” -> artist="周杰伦", query=""
-        # - “帮我播放一下歌曲爱要怎么说出口” -> artist="", query="爱要怎么说出口"
-        # - “播放歌曲冬眠” -> artist="", query="冬眠"
+        # 严格门禁：只有包含明确点歌/听歌动词、或者书名号、标准分隔符时，才触发规则点歌工作流；
+        # 其余所有开放对话（如“你猜我今天的心情如何”、“你好”、“我今天好累”），坚决不通过规则劫持，100% 归还给大模型心智大脑！
+        has_play_verb = any(v in lower for v in [
+            "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
+            "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
+            "放首", "播首", "听首", "整首", "来首", "搜一下", "查一下", "找一下", "点一首", "点首",
+            "唱一首", "唱首", "下载", "缓存"
+        ])
+        has_book_quotes = ("《" in clean and "》" in clean)
+        has_song_noun = any(n in lower for n in ["歌曲", "这首歌", "那首歌", "这首", "那首", "单曲", "曲目", "伴奏", "原声"])
+        has_delim = (" - " in clean) or ("-" in clean and len(clean.split("-")) == 2 and not any(ch in clean for ch in "，,。！？!?"))
+
+        is_explicit_music_intent = has_play_verb or has_book_quotes or has_song_noun or has_delim
+
+        if not is_explicit_music_intent:
+            return None
+
         entity = extract_music_entity(clean)
         if entity:
             art, song = entity
@@ -538,13 +586,17 @@ class IntentRouter:
             logger.info(f"[IntentRouter] 命中确定性规则: {rule_result}")
             return rule_result
 
-        # 如果没有明显的音乐/控制/交互词汇，直接归为常规对话
         suspicious_keywords = [
             "音量", "声音", "放", "停", "切", "唱", "歌", "大声", "小声",
             "静音", "循环", "收藏", "喜欢", "听", "播", "曲", "推荐", "心情", "首"
         ]
         if not any(k in text for k in suspicious_keywords) or not effective_provider:
             return IntentResult(intent_type="CHAT")
+
+        # 若 LLM 提供者支持可用性探测且当前未启动，直接归为 CHAT，杜绝连接超时阻塞
+        if hasattr(effective_provider, "check_availability"):
+            if not await effective_provider.check_availability():
+                return IntentResult(intent_type="CHAT")
 
         # 降级：调用 LLM 做结构化意图与槽位提取
         try:

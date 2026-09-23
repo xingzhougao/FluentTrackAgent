@@ -247,6 +247,8 @@ class SoulseekMusicProvider(BaseMusicProvider):
                 for resp in all_responses:
                     username = resp.get("username", "Soulseek User")
                     files = resp.get("files", [])
+                    has_free_slot = bool(resp.get("hasFreeUploadSlot", False))
+                    queue_len = int(resp.get("queueLength", 999))
                     for f in files:
                         filename = f.get("filename", "")
                         ext = os.path.splitext(filename)[1].lower()
@@ -270,11 +272,19 @@ class SoulseekMusicProvider(BaseMusicProvider):
                             "bitrate": bitrate or (960 if ext in [".flac", ".wav"] else 320),
                             "ext": ext,
                             "format": "flac" if ext == ".flac" else ("wav" if ext == ".wav" else "mp3"),
-                            "length": length_sec
+                            "length": length_sec,
+                            "has_free_slot": has_free_slot,
+                            "queue_len": queue_len
                         })
 
-                # 按品质排序：无损 FLAC 优先，码率高优先
-                peer_candidates.sort(key=lambda p: (p["ext"] in [".flac", ".wav"], p["bitrate"], p["size"]), reverse=True)
+                # 按品质与活跃度排序：有空闲上传槽位 (免排队) 绝对优先 > 无损 FLAC 优先 > 码率高优先 > 文件大小
+                peer_candidates.sort(key=lambda p: (
+                    p.get("has_free_slot", False),
+                    p["ext"] in [".flac", ".wav"],
+                    p["bitrate"],
+                    -p.get("queue_len", 999),
+                    p["size"]
+                ), reverse=True)
 
                 for p in peer_candidates:
                     fn = p["remote_filename"]
@@ -432,10 +442,17 @@ class SoulseekMusicProvider(BaseMusicProvider):
         if main_user and main_file:
             peers_to_try.append({"username": main_user, "remote_filename": main_file, "size": main_size})
 
+        cand_base = os.path.basename(main_file.replace("\\", "/")).lower()
+        cand_title_clean = candidate.title.strip().lower()
+
         for ap in extra.get("peers", []):
             u = ap.get("username")
-            f = ap.get("remote_filename")
+            f = ap.get("remote_filename", "")
             s = ap.get("size", 0)
+            f_base = os.path.basename(f.replace("\\", "/")).lower()
+            # 严格对齐：该 Peer 的文件必须同样包含目标歌名，杜绝向其他无关歌曲的 Peer 发起排队
+            if cand_title_clean and (cand_title_clean not in f_base and cand_base not in f_base):
+                continue
             if u and f and not any(p["username"] == u and p["remote_filename"] == f for p in peers_to_try):
                 peers_to_try.append({"username": u, "remote_filename": f, "size": s})
 
@@ -458,7 +475,8 @@ class SoulseekMusicProvider(BaseMusicProvider):
                     "remote_filename": rf,
                     "size": sz,
                     "target_base": tb,
-                    "transfer_id": tid
+                    "transfer_id": tid,
+                    "queued_time": 0.0
                 })
 
         if not active_transfers:
@@ -466,7 +484,7 @@ class SoulseekMusicProvider(BaseMusicProvider):
             return False
 
         poll_interval = 0.8
-        max_wait = 60.0
+        max_wait = 25.0
         elapsed = 0.0
         best_progress_bytes = 0
 
@@ -518,6 +536,23 @@ class SoulseekMusicProvider(BaseMusicProvider):
                         if is_success_state or is_fully_transferred:
                             winner = at
                             break
+
+                        # 记录排队时间：若处于远端排队超过 10 秒且传输为 0 字节，快速熔断并轮换下一个 Peer
+                        if "Queued" in state and bytes_done == 0:
+                            at["queued_time"] = at.get("queued_time", 0.0) + poll_interval
+                            if at["queued_time"] >= 10.0:
+                                logger.info(f"[SoulseekProvider] Peer [{u}] 远端排队超过 10 秒无进展，判定队列拥堵，快速熔断切换")
+                                failed_users.add(u)
+                                try:
+                                    await client.delete(
+                                        f"{self.api_base_url}/transfers/downloads/{u}/{tid}",
+                                        headers=self._get_headers()
+                                    )
+                                except Exception:
+                                    pass
+                                continue
+                        else:
+                            at["queued_time"] = 0.0
 
                         if any(err in state for err in ["Errored", "Cancelled", "TimedOut", "Rejected", "Aborted"]):
                             failed_users.add(u)

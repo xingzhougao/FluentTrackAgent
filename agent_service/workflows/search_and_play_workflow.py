@@ -223,14 +223,40 @@ class SearchAndPlayWorkflow(BaseWorkflow):
                 else:
                     target_track = first_t
 
+        if not target_track and artist and clean_query:
+            # 双轨探针容错回退：尝试以完整短语 (artist + query 或 artist的query) 在本地检索一次
+            probe_queries = [f"{artist}{clean_query}", f"{artist}的{clean_query}", f"{artist} {clean_query}"]
+            for pq in probe_queries:
+                probe_reply = await self.runtime.call_client_tool(
+                    session_id=session_id,
+                    tool_name="search_local_music",
+                    arguments={"query": pq, "limit": 5},
+                    timeout=3.0
+                )
+                p_tracks = probe_reply.get("result", {}).get("tracks", []) if probe_reply.get("success") else []
+                if p_tracks:
+                    target_track = p_tracks[0]
+                    clean_query = pq
+                    artist = ""
+                    logger.info(f"[SearchAndPlayWorkflow] 双轨探针成功命中本地曲目: 《{target_track.get('title')}》- {target_track.get('artist')}")
+                    break
+
         if not target_track:
             logger.info(f"[SearchAndPlayWorkflow] 本地未精确命中目标曲目: query='{clean_query}', artist='{artist}'，自动流转至网络多源发现工作流")
+            effective_net_q = clean_query
+            effective_net_art = artist
+            if artist and clean_query:
+                from runtime.intent_router import INVALID_ARTIST_EXACT
+                if artist in INVALID_ARTIST_EXACT:
+                    effective_net_q = f"{artist}{clean_query}"
+                    effective_net_art = ""
+
             if hasattr(self.runtime, "network_discovery_workflow") and self.runtime.network_discovery_workflow:
                 return await self.runtime.network_discovery_workflow.execute(
                     session_id=session_id,
                     request_id=request_id,
-                    query=clean_query,
-                    artist=artist,
+                    query=effective_net_q,
+                    artist=effective_net_art,
                     auto_download=True,
                     raw_text=raw_text,
                     **kwargs
