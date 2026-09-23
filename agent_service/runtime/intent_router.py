@@ -543,8 +543,9 @@ class IntentRouter:
         has_book_quotes = ("《" in clean and "》" in clean)
         has_song_noun = any(n in lower for n in ["歌曲", "这首歌", "那首歌", "这首", "那首", "单曲", "曲目", "伴奏", "原声"])
         has_delim = (" - " in clean) or ("-" in clean and len(clean.split("-")) == 2 and not any(ch in clean for ch in "，,。！？!?"))
+        is_known_song = (clean in KNOWN_TITLES_WITH_DE)
 
-        is_explicit_music_intent = has_play_verb or has_book_quotes or has_song_noun or has_delim
+        is_explicit_music_intent = has_play_verb or has_book_quotes or has_song_noun or has_delim or is_known_song
 
         if not is_explicit_music_intent:
             return None
@@ -571,9 +572,26 @@ class IntentRouter:
     ) -> IntentResult:
         """
         统一意图路由入口：
+        0. 快速识别日常社交与开放性聊天
         1. 快速确定性规则
         2. 若未命中且带音乐相关词汇，由 LLM 做结构化意图槽位识别
         """
+        clean_text = text.strip()
+        # 0. 明确的日常社交、心情探讨与开放性闲聊判定（绝不误拦截为搜歌或下载）
+        chat_conversational_triggers = [
+            "你好", "您好", "早上好", "中午好", "下午好", "晚上好", "早安", "午安", "晚安",
+            "嗨", "哈喽", "hello", "hi", "在吗", "在不在", "有人吗", "你是谁", "你叫什么",
+            "你猜", "猜猜", "你觉得", "你认为", "聊聊", "谈谈", "今天天气", "心情如何", "心情怎么样"
+        ]
+        has_explicit_play_verb = any(v in clean_text for v in [
+            "播放", "放一下", "播一下", "听一下", "来一首", "放一首", "播一首", "听一首",
+            "我想听", "我要听", "帮我放", "请放", "给我放", "帮我播放", "请播放", "给我播放",
+            "放首", "播首", "听首", "整首", "来首", "搜一下", "查一下", "找一下", "点一首", "点首",
+            "下载", "缓存"
+        ])
+        if any(trig in clean_text for trig in chat_conversational_triggers) and not has_explicit_play_verb and "《" not in clean_text:
+            return IntentResult(intent_type="CHAT")
+
         effective_provider = llm_provider or kwargs.get("provider")
         rule_result = cls.match_rule(text)
         if rule_result:

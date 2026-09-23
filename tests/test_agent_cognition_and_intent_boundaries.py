@@ -21,6 +21,8 @@ async def test_natural_conversation_not_hijacked():
     """验证日常聊天、心情揣测等开放文本 100% 归还 CHAT，绝不被规则引擎拆解为搜歌"""
     chat_phrases = [
         "你猜我今天的心情如何",
+        "你猜猜我今天心情如何",
+        "下午好",
         "你好",
         "你好呀",
         "在吗",
@@ -42,6 +44,13 @@ async def test_natural_conversation_not_hijacked():
 
 async def test_explicit_music_intent_and_safe_split():
     """验证显式点歌指令精准识别，且经典含'的'歌曲不会被误切分为歌手与歌名"""
+    # 0. 纯经典歌名输入: 迷人的危险
+    q0 = "迷人的危险"
+    r0 = IntentRouter.match_rule(q0)
+    assert r0 is not None and r0.intent_type == "SEARCH_AND_PLAY"
+    assert r0.params["query"] == "迷人的危险"
+    assert r0.params["artist"] == ""
+
     # 1. 迷人的危险 (形容词'迷人'不能被误认为歌手)
     q1 = "帮我播放一下歌曲迷人的危险"
     r1 = IntentRouter.match_rule(q1)

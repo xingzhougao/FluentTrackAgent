@@ -9,7 +9,25 @@
 #include <QDir>
 #include <QFile>
 #include <QTcpSocket>
+#include <QThread>
 #include <QCoreApplication>
+#ifdef Q_OS_WIN
+#include <windows.h>
+
+static HANDLE s_agentJobObject = nullptr;
+
+static void setupWindowsJobObject()
+{
+    if (!s_agentJobObject) {
+        s_agentJobObject = CreateJobObjectW(nullptr, nullptr);
+        if (s_agentJobObject) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(s_agentJobObject, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        }
+    }
+}
+#endif
 
 MusicAgentController::MusicAgentController(QObject *parent)
     : QObject(parent)
@@ -379,13 +397,24 @@ void MusicAgentController::onTransportError(const QString &error)
 
 void MusicAgentController::startAgentService()
 {
-    // 1. 快速探活 127.0.0.1:8765 是否已有运行中的实例（如开发者在终端单独调试）
+    // 1. 检查本地 8765 端口是否被残留僵尸进程占用
     QTcpSocket probeSocket;
     probeSocket.connectToHost(QStringLiteral("127.0.0.1"), 8765);
     if (probeSocket.waitForConnected(200)) {
-        qDebug() << "[MusicAgentController] 检测到本地 8765 端口已有 Agent 服务运行，直接复用连接";
         probeSocket.disconnectFromHost();
-        return;
+        if (qEnvironmentVariableIsEmpty("FLUENT_REUSE_EXTERNAL_AGENT")) {
+            qWarning() << "[MusicAgentController] 检测到本地 8765 端口已被占用，正在清理旧版本残留僵尸进程以加载最新源码...";
+#ifdef Q_OS_WIN
+            QProcess::execute(QStringLiteral("powershell"),
+                              QStringList() << QStringLiteral("-NoProfile")
+                                            << QStringLiteral("-Command")
+                                            << QStringLiteral("Get-NetTCPConnection -LocalPort 8765 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"));
+#endif
+            QThread::msleep(400);
+        } else {
+            qDebug() << "[MusicAgentController] 检测到 FLUENT_REUSE_EXTERNAL_AGENT，复用现有 8765 端口服务";
+            return;
+        }
     }
 
     // 2. 定位 agent_service/main.py 相对路径
@@ -418,7 +447,24 @@ void MusicAgentController::startAgentService()
     m_agentProcess->setProcessEnvironment(env);
     m_agentProcess->setWorkingDirectory(projRoot);
 
-    // 5. 绑定实时日志输出
+    // 5. 绑定实时日志输出与 Windows Job Object
+#ifdef Q_OS_WIN
+    connect(m_agentProcess, &QProcess::started, this, [this]() {
+        setupWindowsJobObject();
+        if (s_agentJobObject && m_agentProcess) {
+            qint64 pid = m_agentProcess->processId();
+            if (pid > 0) {
+                HANDLE hProcess = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+                if (hProcess) {
+                    AssignProcessToJobObject(s_agentJobObject, hProcess);
+                    CloseHandle(hProcess);
+                    qDebug() << "[MusicAgentController] 已成功将 Agent 子进程树绑定至 Windows Job Object (确保退出时无孤儿僵尸进程)";
+                }
+            }
+        }
+    });
+#endif
+
     connect(m_agentProcess, &QProcess::readyReadStandardOutput, this, [this]() {
         if (!m_agentProcess) return;
         QByteArray out = m_agentProcess->readAllStandardOutput();
