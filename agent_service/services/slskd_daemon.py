@@ -3,9 +3,11 @@ SlskdDaemonManager 伴生守护进程管理服务
 负责 slskd.exe 的自动部署、免感启动、静默后台运行与生命周期维护。
 """
 import os
+import re
 import sys
 import time
-import uuid
+import secrets
+import shutil
 import zipfile
 import logging
 import asyncio
@@ -37,6 +39,17 @@ class SlskdDaemonManager:
         self._process: Optional[subprocess.Popen] = None
         self._download_url = "https://github.com/slskd/slskd/releases/download/0.26.0/slskd-0.26.0-win-x64.zip"
         self._mirror_url = "https://ghproxy.net/https://github.com/slskd/slskd/releases/download/0.26.0/slskd-0.26.0-win-x64.zip"
+
+    @staticmethod
+    def _new_soulseek_credentials() -> tuple[str, str]:
+        # 每次新安装生成一次，之后从本机 slskd.yml 读取，重启不会变更。
+        return f"ft_{secrets.token_hex(8)}", secrets.token_hex(16)
+
+    @staticmethod
+    def _is_legacy_generated_account(username: str) -> bool:
+        # 旧安装包曾把开发机上的自动生成账号一起复制给所有用户。
+        # 仅迁移本项目旧版生成的账号；用户自己填写的 Soulseek 账号原样保留。
+        return bool(re.fullmatch(r"(?:fl_usr_[0-9a-f]{8}|fluent_guest_[0-9a-f]{6})", username))
 
     async def is_running(self) -> bool:
         """探针检测本地 5030 端口的 slskd 是否已在提供服务"""
@@ -126,14 +139,31 @@ class SlskdDaemonManager:
         downloads_str = str(self.download_dir).replace("/", "\\")
         incomplete_str = str(self.incomplete_dir).replace("/", "\\")
 
-        # 若已存在配置，校验其路径是否为当前机器路径，若换了电脑/目录则自动纠正
+        # 若已存在配置，迁移旧安装包复制的自动账号，并校验本机路径。
         if self.config_path.exists():
             try:
                 import yaml
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
+                if not isinstance(data, dict):
+                    raise ValueError("slskd.yml 顶层结构不是 YAML 映射")
 
                 updated = False
+                soulseek = data.get("soulseek") or {}
+                if not isinstance(soulseek, dict):
+                    soulseek = {}
+                username = str(soulseek.get("username") or "")
+                if self._is_legacy_generated_account(username):
+                    backup_path = self.config_path.with_name("slskd.yml.pre-account-migration.bak")
+                    if not backup_path.exists():
+                        shutil.copy2(self.config_path, backup_path)
+                    new_username, new_password = self._new_soulseek_credentials()
+                    soulseek["username"] = new_username
+                    soulseek["password"] = new_password
+                    data["soulseek"] = soulseek
+                    updated = True
+                    logger.info("[SlskdDaemon] 已将旧安装包复制的 Soulseek 自动账号迁移为本机独立账号")
+
                 if "directories" not in data:
                     data["directories"] = {}
                 if data["directories"].get("downloads") != downloads_str:
@@ -152,15 +182,13 @@ class SlskdDaemonManager:
                 if updated:
                     with open(self.config_path, "w", encoding="utf-8") as f:
                         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-                    logger.info("[SlskdDaemon] slskd 配置文件路径已自动同步为当前机器真实路径 (原生反斜杠)")
+                    logger.info("[SlskdDaemon] slskd 本机配置已更新")
             except Exception as e:
-                logger.debug(f"[SlskdDaemon] 校验/纠正配置路径异常: {e}")
+                logger.warning(f"[SlskdDaemon] 更新本机 slskd 配置失败: {e}")
             return
 
-        # 随机分配一个免冲突的游客账户 (Soulseek 在初次登录时若用户名未注册会自动为其激活创建)
-        random_suffix = uuid.uuid4().hex[:6]
-        guest_user = f"fluent_guest_{random_suffix}"
-        guest_pass = f"pass_{uuid.uuid4().hex[:8]}"
+        # 新安装生成独立凭据，只写入本机运行时配置，不进入安装包。
+        guest_user, guest_pass = self._new_soulseek_credentials()
 
         try:
             import yaml
@@ -240,7 +268,7 @@ class SlskdDaemonManager:
                 await asyncio.sleep(step)
                 elapsed += step
                 if await self.is_running():
-                    logger.info(f"[SlskdDaemon] slskd 守护进程已成功启动并就绪 (PID={self._process.pid})")
+                    logger.info(f"[SlskdDaemon] slskd HTTP API 已就绪，Soulseek 登录状态待检 (PID={self._process.pid})")
                     return True
 
             last_err = ""

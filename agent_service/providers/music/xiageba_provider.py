@@ -80,11 +80,11 @@ class XiagebaProvider(BaseMusicProvider):
                             break
                     except Exception as conn_err:
                         if attempt == 1:
-                            logger.debug(f"[XiagebaProvider] 检索连接异常: {conn_err}")
+                            logger.warning(f"[XiagebaProvider] 检索连接异常: {conn_err}")
                         await asyncio.sleep(0.3)
 
                 if not resp or resp.status_code != 200:
-                    logger.debug(f"[XiagebaProvider] 下歌吧站点暂无响应或返回状态: {resp.status_code if resp else 'None'}")
+                    logger.warning(f"[XiagebaProvider] 下歌吧站点暂无响应或返回状态: {resp.status_code if resp else 'None'}")
                     return []
 
                 res_json = resp.json()
@@ -216,7 +216,7 @@ class XiagebaProvider(BaseMusicProvider):
                     results.append(candidate)
 
         except Exception as e:
-            logger.debug(f"[XiagebaProvider] 检索流程捕获异常: {e}")
+            logger.warning(f"[XiagebaProvider] 检索流程捕获异常: {e}")
 
         results.sort(key=lambda c: c.confidence, reverse=True)
         return results[:limit]

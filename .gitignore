@@ -11,6 +11,8 @@ __pycache__/
 tools/
 /config/covers
 /scripts
+!/scripts/build_standalone_package.py
 /dist
 /installer
-config/recent_tracks.ini
+/config/recent_tracks.ini
+/docs

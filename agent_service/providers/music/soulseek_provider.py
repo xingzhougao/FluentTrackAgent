@@ -103,7 +103,9 @@ class SoulseekMusicProvider(BaseMusicProvider):
             return []
 
         # 尝试等待中央服务器连接就绪 (最多等待 8 秒，若重连中则等待握手完成)
-        await self.ensure_logged_in(max_wait=8.0)
+        if not await self.ensure_logged_in(max_wait=8.0):
+            logger.warning("[SoulseekProvider] slskd API 已启动，但尚未登录 Soulseek 服务器；跳过本次 P2P 搜索，请检查 slskd.log 中的登录/踢线原因")
+            return []
 
         clean_q = query.strip()
         clean_art = artist.strip()
@@ -147,9 +149,10 @@ class SoulseekMusicProvider(BaseMusicProvider):
                             if sid:
                                 search_ids.append(sid)
                     except Exception as ex:
-                        logger.debug(f"[SoulseekProvider] 发起 P2P 检索 '{term}' 失败: {ex}")
+                            logger.warning(f"[SoulseekProvider] 发起 P2P 检索 '{term}' 失败: {ex}")
 
                 if not search_ids:
+                    logger.warning("[SoulseekProvider] P2P 搜索请求均未被 slskd 接受，无法获取候选")
                     return []
 
                 # 轮询直至所有检索完成、已收到充分结果或超时 (Soulseek P2P 汇聚通常需要 12~24s)

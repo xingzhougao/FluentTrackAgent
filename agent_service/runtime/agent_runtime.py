@@ -303,6 +303,8 @@ class AgentRuntime:
                     session_id=session_id,
                     request_id=request_id,
                     duration_ms=duration_ms,
+                    success=wf_output.success,
+                    error_code="WORKFLOW_FAILED" if not wf_output.success else None,
                     payload={
                         "intent_type": intent.intent_type,
                         "action": intent.action,

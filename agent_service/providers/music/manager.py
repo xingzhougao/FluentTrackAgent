@@ -60,9 +60,10 @@ class MusicProviderManager:
         provider_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         raw_candidates: List[TrackCandidate] = []
-        for res in provider_results:
+        for (name, _), res in zip(self.providers.items(), provider_results):
             if isinstance(res, list):
                 raw_candidates.extend(res)
+                logger.info(f"[MusicProviderManager] Provider {name} 搜索返回 {len(res)} 条候选")
             elif isinstance(res, Exception):
                 logger.warning(f"[MusicProviderManager] Provider 检索执行报错: {res}")
 
@@ -211,10 +212,10 @@ class MusicProviderManager:
                 timeout=timeout
             )
         except asyncio.TimeoutError:
-            logger.debug(f"[MusicProviderManager] Provider {provider.name} 检索超时 ({timeout}s)")
+            logger.warning(f"[MusicProviderManager] Provider {provider.name} 检索超时 ({timeout}s)")
             return []
         except Exception as e:
-            logger.debug(f"[MusicProviderManager] Provider {provider.name} 检索失败: {e}")
+            logger.warning(f"[MusicProviderManager] Provider {provider.name} 检索失败: {e}")
             return []
 
     async def resolve_download_url(self, candidate: TrackCandidate) -> Optional[str]:
