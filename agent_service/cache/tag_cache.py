@@ -27,20 +27,22 @@ class TagRecord(BaseModel):
     source: str = "heuristic"  # heuristic | llm | rule | manual
     updated_at: float = Field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "track_path": self.track_path,
-            "title": self.title,
-            "artist": self.artist,
-            "mood": self.mood,
-            "scene": self.scene,
-            "energy": self.energy,
-            "language": self.language,
-            "tags": self.tags,
-            "confidence": self.confidence,
-            "source": self.source,
-            "updated_at": self.updated_at
-        }
+def _tag_record_to_dict(self) -> Dict[str, Any]:
+    return {
+        "track_path": self.track_path,
+        "title": self.title,
+        "artist": self.artist,
+        "mood": self.mood,
+        "scene": self.scene,
+        "energy": self.energy,
+        "language": self.language,
+        "tags": self.tags,
+        "confidence": self.confidence,
+        "source": self.source,
+        "updated_at": self.updated_at
+    }
+
+TagRecord.to_dict = _tag_record_to_dict
 
 
 class AgentTagCache:

@@ -120,23 +120,39 @@ class SlskdDaemonManager:
         self.download_dir.mkdir(parents=True, exist_ok=True)
         self.incomplete_dir.mkdir(parents=True, exist_ok=True)
 
-        # Windows 路径转为安全 YAML 格式 (使用反斜杠且双反斜杠转义)
-        downloads_str = str(self.download_dir).replace("/", "\\").replace("\\", "\\\\")
-        incomplete_str = str(self.incomplete_dir).replace("/", "\\").replace("\\", "\\\\")
+        # 路径规范化：在 Windows 下必须使用原生反斜杠 \，因为 slskd 的 FileService 在下载时会通过
+        # Path.GetFullPath(filename) != filename 强校验绝对路径，若包含正斜杠 / 会被误判为非绝对路径而抛出异常；
+        # 配合 PyYAML 安全序列化输出标准 YAML，既杜绝转义错误，又完全符合 slskd 的路径校验规则。
+        downloads_str = str(self.download_dir).replace("/", "\\")
+        incomplete_str = str(self.incomplete_dir).replace("/", "\\")
 
         # 若已存在配置，校验其路径是否为当前机器路径，若换了电脑/目录则自动纠正
         if self.config_path.exists():
             try:
+                import yaml
                 with open(self.config_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                if downloads_str not in content:
-                    import re
-                    content = re.sub(r'downloads:\s*".*?"', f'downloads: "{downloads_str}"', content)
-                    content = re.sub(r'incomplete:\s*".*?"', f'incomplete: "{incomplete_str}"', content)
-                    content = re.sub(r'shares:\s*\n\s*directories:\s*\n\s*-\s*".*?"', f'shares:\n  directories:\n    - "{downloads_str}"', content)
+                    data = yaml.safe_load(f) or {}
+
+                updated = False
+                if "directories" not in data:
+                    data["directories"] = {}
+                if data["directories"].get("downloads") != downloads_str:
+                    data["directories"]["downloads"] = downloads_str
+                    updated = True
+                if data["directories"].get("incomplete") != incomplete_str:
+                    data["directories"]["incomplete"] = incomplete_str
+                    updated = True
+
+                if "shares" not in data:
+                    data["shares"] = {}
+                if data["shares"].get("directories") != [downloads_str]:
+                    data["shares"]["directories"] = [downloads_str]
+                    updated = True
+
+                if updated:
                     with open(self.config_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    logger.info("[SlskdDaemon] slskd 配置文件路径已自动同步为当前机器真实路径")
+                        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    logger.info("[SlskdDaemon] slskd 配置文件路径已自动同步为当前机器真实路径 (原生反斜杠)")
             except Exception as e:
                 logger.debug(f"[SlskdDaemon] 校验/纠正配置路径异常: {e}")
             return
@@ -146,30 +162,38 @@ class SlskdDaemonManager:
         guest_user = f"fluent_guest_{random_suffix}"
         guest_pass = f"pass_{uuid.uuid4().hex[:8]}"
 
-        yaml_content = f"""# slskd 自动生成的内置伴生配置 (由 Fluent Music AI Agent 管理)
-soulseek:
-  address: vps.slsknet.org
-  port: 2271
-  username: {guest_user}
-  password: {guest_pass}
-
-web:
-  port: {self.port}
-  logging: false
-  authentication:
-    disabled: true
-
-directories:
-  downloads: "{downloads_str}"
-  incomplete: "{incomplete_str}"
-
-shares:
-  directories:
-    - "{downloads_str}"
-"""
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            f.write(yaml_content)
-        logger.info(f"[SlskdDaemon] 预置 slskd 配置文件已就绪: 用户名={guest_user}")
+        try:
+            import yaml
+            config_data = {
+                "soulseek": {
+                    "address": "vps.slsknet.org",
+                    "port": 2271,
+                    "username": guest_user,
+                    "password": guest_pass
+                },
+                "web": {
+                    "port": self.port,
+                    "logging": False,
+                    "authentication": {
+                        "disabled": True
+                    }
+                },
+                "directories": {
+                    "downloads": downloads_str,
+                    "incomplete": incomplete_str
+                },
+                "shares": {
+                    "directories": [downloads_str]
+                },
+                "feature": {
+                    "swagger": True
+                }
+            }
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            logger.info(f"[SlskdDaemon] 预置 slskd 配置文件已就绪: 用户名={guest_user}")
+        except Exception as e:
+            logger.error(f"[SlskdDaemon] 写入初始 slskd 配置文件异常: {e}")
 
     async def start(self) -> bool:
         """静默启动伴生 slskd 守护进程"""
@@ -186,19 +210,25 @@ shares:
 
         self.ensure_configured()
 
-        # 3. 构造启动命令，隐藏黑框
+        # 3. 构造启动命令，隐藏黑框，记录日志至 tools/slskd/slskd.log
         cmd = [str(self.exe_path), "--app-dir", str(self.data_dir)]
         flags = 0
         if os.name == "nt":
             flags = subprocess.CREATE_NO_WINDOW
+
+        slskd_log_file = self.tools_dir / "slskd.log"
+        try:
+            log_f = open(slskd_log_file, "a", encoding="utf-8")
+        except Exception:
+            log_f = subprocess.DEVNULL
 
         try:
             logger.info(f"[SlskdDaemon] 正在静默拉起 slskd 伴生服务: {cmd[0]} (端口: {self.port})")
             self._process = subprocess.Popen(
                 cmd,
                 cwd=str(self.tools_dir),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=log_f,
                 creationflags=flags
             )
 
@@ -213,7 +243,15 @@ shares:
                     logger.info(f"[SlskdDaemon] slskd 守护进程已成功启动并就绪 (PID={self._process.pid})")
                     return True
 
-            logger.warning("[SlskdDaemon] slskd 启动超时，可能仍在初始化中")
+            last_err = ""
+            if slskd_log_file.exists():
+                try:
+                    with open(slskd_log_file, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                        last_err = "".join(lines[-4:]).strip()
+                except Exception:
+                    pass
+            logger.warning(f"[SlskdDaemon] slskd 启动超时，可能仍在初始化中。末尾日志: {last_err}")
             return False
         except Exception as e:
             logger.error(f"[SlskdDaemon] 启动 slskd 进程失败: {e}")

@@ -9,6 +9,11 @@ import sys
 if "PYTHONPATH" in os.environ:
     del os.environ["PYTHONPATH"]
 
+# 确保脚本所在目录置于 sys.path 首位，兼容绿色便携式/沙盒化 Python 独立运行环境
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 import argparse
 import asyncio
 import uvicorn

@@ -27,9 +27,9 @@ void AppConfig::findProjectRoot()
 
     // 探测候选根目录
     const QStringList candidates = {
+        appDir,                                                // 优先检查当前运行目录（打包发布环境）
         QDir::cleanPath(appDir + QStringLiteral("/../../")),   // Qt Shadow Build: build/Desktop_... -> 根目录
         QDir::cleanPath(appDir + QStringLiteral("/../")),
-        appDir,
         currentDir
     };
 

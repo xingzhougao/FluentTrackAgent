@@ -484,7 +484,7 @@ class SoulseekMusicProvider(BaseMusicProvider):
             return False
 
         poll_interval = 0.8
-        max_wait = 25.0
+        max_wait = 45.0
         elapsed = 0.0
         best_progress_bytes = 0
 
@@ -537,11 +537,11 @@ class SoulseekMusicProvider(BaseMusicProvider):
                             winner = at
                             break
 
-                        # 记录排队时间：若处于远端排队超过 10 秒且传输为 0 字节，快速熔断并轮换下一个 Peer
+                        # 记录排队时间：若处于远端排队超过 20 秒且传输为 0 字节，快速熔断并轮换下一个 Peer
                         if "Queued" in state and bytes_done == 0:
                             at["queued_time"] = at.get("queued_time", 0.0) + poll_interval
-                            if at["queued_time"] >= 10.0:
-                                logger.info(f"[SoulseekProvider] Peer [{u}] 远端排队超过 10 秒无进展，判定队列拥堵，快速熔断切换")
+                            if at["queued_time"] >= 20.0:
+                                logger.info(f"[SoulseekProvider] Peer [{u}] 远端排队超过 20 秒无进展，判定队列拥堵，快速熔断切换")
                                 failed_users.add(u)
                                 try:
                                     await client.delete(

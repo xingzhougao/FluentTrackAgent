@@ -534,6 +534,8 @@ QString MusicAgentController::findPythonExecutable() const
 {
     QString projRoot = AppConfig::instance().projectRoot();
     QStringList candidates = {
+        projRoot + QStringLiteral("/python_runtime/python.exe"),
+        projRoot + QStringLiteral("/python_runtime/pythonw.exe"),
         projRoot + QStringLiteral("/.venv/Scripts/python.exe"),
         projRoot + QStringLiteral("/venv/Scripts/python.exe"),
         projRoot + QStringLiteral("/.venv/bin/python"),

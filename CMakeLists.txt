@@ -14,19 +14,18 @@ if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/importedcontent/CMakeLists.txt")
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/importedcontent)
 endif()
 
-qt_add_executable(appFluentWinUI_Musicplayer
-
+qt_add_library(fluent_music_core SHARED
 )
 
-qt_add_qml_module(appFluentWinUI_Musicplayer
+target_compile_definitions(fluent_music_core PRIVATE FLUENT_CORE_LIBRARY)
+
+qt_add_qml_module(fluent_music_core
     URI FluentWinUI_Musicplayer
-    QML_FILES
-    SOURCES src/main.cpp
+    VERSION 1.0
     QML_FILES qml/Main.qml
     QML_FILES qml/components/TopBar.qml
     QML_FILES qml/components/SideBar.qml
     QML_FILES qml/components/NavButton.qml
-    QML_FILES
     QML_FILES qml/components/AlbumCard.qml
     QML_FILES qml/components/MusicRow.qml
     QML_FILES qml/components/PlayerBar.qml
@@ -49,6 +48,8 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
     QML_FILES qml/agent/AgentInputBar.qml
     QML_FILES qml/agent/AgentSettingsDialog.qml
     SOURCES
+        src/AppLauncher.h
+        src/AppLauncher.cpp
         src/PlayerController.h
         src/PlayerController.cpp
         src/MusicLibraryModel.h
@@ -113,22 +114,30 @@ qt_add_qml_module(appFluentWinUI_Musicplayer
         qml/image_resource/banner.png
 )
 
-# Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
-# If you are developing for iOS or macOS you should consider setting an
-# explicit, fixed bundle identifier manually though.
+target_link_libraries(fluent_music_core
+    PUBLIC
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Multimedia
+        Qt6::WebSockets
+        Qt6::Network
+)
+
+qt_add_executable(appFluentWinUI_Musicplayer
+    src/main.cpp
+)
+
 set_target_properties(appFluentWinUI_Musicplayer PROPERTIES
-#    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.appFluentWinUI_Musicplayer
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
 )
 
 target_link_libraries(appFluentWinUI_Musicplayer
-    PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::WebSockets Qt6::Network
+    PRIVATE
+        fluent_music_core
+        Qt6::Core
 )
 
-install(TARGETS appFluentWinUI_Musicplayer
+install(TARGETS appFluentWinUI_Musicplayer fluent_music_core
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

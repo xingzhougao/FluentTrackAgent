@@ -10,3 +10,7 @@ agent_service/__pycache__
 __pycache__/
 tools/
 /config/covers
+/scripts
+/dist
+/installer
+config/recent_tracks.ini
